@@ -1,0 +1,1 @@
+{"event_type":"ssl","id.orig_h":"192.0.2.13","id.orig_p":43333,"id.resp_h":"198.51.100.44","id.resp_p":443,"ja3":"abcd1234","proto":"tcp","server":"secure.test.invalid","ts":1758955380.25,"uid":"SSL1234567890abcd","version":"TLS 1.3"}

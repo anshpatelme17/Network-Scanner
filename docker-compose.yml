@@ -1,0 +1,216 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-security_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-secuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Localhost-only binding: the database is reachable from backend/frontend
+    # over the Compose network; host access exists solely for local
+    # development (migrations, psql). Never publish this port publicly.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-secuser} -d ${POSTGRES_DB:-security_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    # Step 31: container boundaries and bounded logs. no-new-privileges and
+    # the log driver are safe defaults. Capabilities are deliberately NOT
+    # dropped: the official postgres entrypoint runs initdb as root and
+    # then switches to the `postgres` user, which needs CHOWN/SETUID/
+    # SETGID. `cap_drop: ALL` makes the container fail its healthcheck
+    # permanently, so it is documented here rather than applied. The
+    # backend, which needs none of these, does drop all capabilities.
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 128m
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          pids: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_NAME: ${APP_NAME:-Security Platform}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-secuser}:${POSTGRES_PASSWORD:-changeme_in_env}@db:5432/${POSTGRES_DB:-security_platform}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_dev_only}
+      # Step 32: must be forwarded explicitly. The image contains no .env
+      # file, so the Settings env_file source resolves to nothing inside the
+      # container and an unlisted variable is simply never delivered --
+      # REQUIRE_AUTH=true in the project .env used to have no effect here.
+      REQUIRE_AUTH: ${REQUIRE_AUTH:-false}
+      BACKEND_CORS_ORIGINS: '["http://localhost:5173", "http://localhost:3000", "http://localhost"]'
+      # Step 31: optional Host header allow-list. Empty by default so the
+      # local workflow and the TestClient are unaffected; set
+      # TRUSTED_HOSTS='["api.example.com"]' in a deployment. A wildcard is
+      # rejected at startup by the settings validator.
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
+      # Step 31: bounded database pool and request handling.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_TIMEOUT_SECONDS: ${DB_POOL_TIMEOUT_SECONDS:-10}
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-1800}
+      DB_CONNECT_TIMEOUT_SECONDS: ${DB_CONNECT_TIMEOUT_SECONDS:-10}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      MAX_REQUEST_BYTES: ${MAX_REQUEST_BYTES:-1048576}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      RATE_LIMIT_RECOMPUTE: ${RATE_LIMIT_RECOMPUTE:-120}
+      RATE_LIMIT_RECALCULATE: ${RATE_LIMIT_RECALCULATE:-120}
+      RATE_LIMIT_RISK_CALCULATE: ${RATE_LIMIT_RISK_CALCULATE:-120}
+      RATE_LIMIT_CONNECTOR_POLL: ${RATE_LIMIT_CONNECTOR_POLL:-60}
+      RATE_LIMIT_RESPONSE_GOVERNANCE: ${RATE_LIMIT_RESPONSE_GOVERNANCE:-300}
+      RATE_LIMIT_SCAN_START: ${RATE_LIMIT_SCAN_START:-60}
+      RATE_LIMIT_LOGIN_FAILURES: ${RATE_LIMIT_LOGIN_FAILURES:-5}
+      RATE_LIMIT_MAX_BUCKETS: ${RATE_LIMIT_MAX_BUCKETS:-10000}
+      # Step 26/27: connector configuration, empty by default (nothing is
+      # connected). Values come from the project .env; secrets are never
+      # echoed by any endpoint.
+      SURICATA_EVE_PATH: ${SURICATA_EVE_PATH:-}
+      ZEEK_LOG_PATH: ${ZEEK_LOG_PATH:-}
+      WAZUH_API_URL: ${WAZUH_API_URL:-}
+      WAZUH_USERNAME: ${WAZUH_USERNAME:-}
+      WAZUH_PASSWORD: ${WAZUH_PASSWORD:-}
+      DEFENDER_TENANT_ID: ${DEFENDER_TENANT_ID:-}
+      DEFENDER_CLIENT_ID: ${DEFENDER_CLIENT_ID:-}
+      DEFENDER_CLIENT_SECRET: ${DEFENDER_CLIENT_SECRET:-}
+      DEFENDER_API_ENDPOINT: ${DEFENDER_API_ENDPOINT:-https://graph.microsoft.com/v1.0}
+      DEFENDER_AUTHORITY: ${DEFENDER_AUTHORITY:-https://login.microsoftonline.com}
+      CONNECTOR_TIMEOUT_SECONDS: ${CONNECTOR_TIMEOUT_SECONDS:-10}
+      CONNECTOR_MAX_RESPONSE_BYTES: ${CONNECTOR_MAX_RESPONSE_BYTES:-1048576}
+      CONNECTOR_MAX_PAGES: ${CONNECTOR_MAX_PAGES:-3}
+      CONNECTOR_MAX_EVENTS: ${CONNECTOR_MAX_EVENTS:-100}
+      CONNECTOR_RETRY_MAX: ${CONNECTOR_RETRY_MAX:-1}
+      CONNECTOR_VERIFY_TLS: ${CONNECTOR_VERIFY_TLS:-true}
+      # Phase 2 Step 5: the due-poll pass is disabled by default and starts
+      # no background thread, timer or daemon.
+      CONNECTOR_AUTO_POLL_ENABLED: ${CONNECTOR_AUTO_POLL_ENABLED:-false}
+      CONNECTOR_POLL_INTERVAL_SECONDS: ${CONNECTOR_POLL_INTERVAL_SECONDS:-300}
+      CONNECTOR_FAILURE_COOLDOWN_SECONDS: ${CONNECTOR_FAILURE_COOLDOWN_SECONDS:-60}
+      # Step 28: bounded ingestion pipeline, operator-initiated only.
+      # Conservative server-enforced defaults; no scheduler/streaming.
+      INGESTION_MAX_BATCH_SIZE: ${INGESTION_MAX_BATCH_SIZE:-50}
+      INGESTION_QUEUE_MAX: ${INGESTION_QUEUE_MAX:-500}
+      INGESTION_RETRY_MAX: ${INGESTION_RETRY_MAX:-1}
+      INGESTION_RETRY_BACKOFF_SECONDS: ${INGESTION_RETRY_BACKOFF_SECONDS:-0.25}
+      CONNECTOR_FILE_RESUME: ${CONNECTOR_FILE_RESUME:-false}
+      # Step 29: deterministic incident-intelligence bounds. Server-side
+      # ceilings only (windows, per-operation caps, returned-entry caps,
+      # operator CSV of disabled rule ids); recalculation is
+      # operator-initiated (MANAGE_INCIDENT) with no scheduler.
+      CORRELATION_TEMPORAL_WINDOW_MINUTES: ${CORRELATION_TEMPORAL_WINDOW_MINUTES:-60}
+      CORRELATION_CROSS_SOURCE_WINDOW_MINUTES: ${CORRELATION_CROSS_SOURCE_WINDOW_MINUTES:-60}
+      CORRELATION_ENTITY_WINDOW_MINUTES: ${CORRELATION_ENTITY_WINDOW_MINUTES:-5}
+      CORRELATION_MAX_EVENTS_PER_OPERATION: ${CORRELATION_MAX_EVENTS_PER_OPERATION:-200}
+      CORRELATION_RELATIONSHIP_MAX: ${CORRELATION_RELATIONSHIP_MAX:-200}
+      CORRELATION_RELATIONSHIP_EVIDENCE_MAX: ${CORRELATION_RELATIONSHIP_EVIDENCE_MAX:-20}
+      CORRELATION_EVIDENCE_MAX: ${CORRELATION_EVIDENCE_MAX:-200}
+      CORRELATION_TIMELINE_MAX_ENTRIES: ${CORRELATION_TIMELINE_MAX_ENTRIES:-500}
+      CORRELATION_DISABLED_RULES: ${CORRELATION_DISABLED_RULES:-}
+    ports:
+      # Step 10: loopback-only by default, exactly as the database below. The
+      # API was the only service published on every host interface; a reverse
+      # proxy or a TLS terminator should publish it deliberately instead.
+      # Set API_BIND=0.0.0.0 (or a specific address) to expose it.
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Step 31: the image already runs as an unprivileged user (uid 10001);
+    # these settings drop everything the service does not need and cap the
+    # log volume. The application root filesystem is left writable because
+    # the container writes no files, but a read-only mount is documented as
+    # the production option in docs/architecture.md.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Step 10: applies the read-only root filesystem that Step 31 documented as
+    # the production option. Verified compatible by inspection: the image sets
+    # PYTHONDONTWRITEBYTECODE=1, binds an unprivileged port, runs no migration
+    # at startup, and the application code contains no file-write path (the
+    # single `open(...)` is a read of a file-source connector). /tmp is
+    # already a tmpfs, so scratch writes still work.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          pids: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # Step 10: loopback-only by default. Set FRONTEND_BIND=0.0.0.0 to
+      # publish the UI on a host interface.
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-5173}:80"
+    # Step 31: declared in compose as well as the image so the tuned
+    # timings are visible where an operator looks for them.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Step 31: no-new-privileges only. Capabilities are deliberately NOT
+    # dropped here: the nginx image runs its master process as root in
+    # order to bind :80 and then drops privileges for its workers, so
+    # `cap_drop: ALL` would prevent it from listening at all. The
+    # backend, which binds an unprivileged port, does drop all
+    # capabilities. Tightening nginx to an unprivileged listener (and
+    # then dropping caps) is a documented future option that requires an
+    # unprivileged port and a reconfigured image.
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          pids: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:

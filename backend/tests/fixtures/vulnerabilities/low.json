@@ -1,0 +1,1 @@
+{"affected_host":"2001:db8::20","finding_id":"FIND-0004","port":23,"protocol":"tcp","severity":"low","title":"Test Legacy Telnet Service"}

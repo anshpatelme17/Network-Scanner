@@ -1,0 +1,1 @@
+{"app_proto":"failed","dest_ip":"198.51.100.99","dest_port":0,"event_type":"flow","flow":{"age":5,"bytes_toclient":0,"bytes_toserver":120,"pkts_toclient":0,"pkts_toserver":2,"state":"new"},"flow_id":5566778899001122,"proto":"TCP","src_ip":"192.0.2.14","src_port":44000,"timestamp":"2026-09-27T06:04:00.000000+0000"}

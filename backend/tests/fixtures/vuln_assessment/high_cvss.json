@@ -1,0 +1,1 @@
+{"cvss_score": 7.5, "description": "Synthetic fixture: high test finding.", "port": 443, "protocol": "tcp", "service": "https", "severity": "HIGH", "title": "TEST High Fixture Finding"}

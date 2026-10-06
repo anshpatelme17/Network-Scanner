@@ -1,0 +1,1 @@
+{"affected_host":"192.0.2.11","cves":["CVE-2024-0002","cve-2024-0003"],"cvss":7.5,"finding_id":"FIND-0002","ip":"192.0.2.11","port":22,"product":"TestSSH","protocol":"TCP","scanner_type":"synthetic-lab","service":"ssh","title":"Test High SSH Weakness","version":"9.3"}

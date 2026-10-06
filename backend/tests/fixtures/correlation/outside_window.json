@@ -1,0 +1,1 @@
+{"source_type": "DEFENDER", "source_name": "corr-def", "event_type": "DEFENDER_ALERT", "severity": "INFO", "title": "Late event same target", "event_time": "2026-09-27T09:30:00Z", "source_ip": "192.0.2.40", "destination_ip": "198.51.100.23", "external_event_id": "corr-outside"}

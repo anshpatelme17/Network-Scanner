@@ -1,0 +1,1 @@
+{"event_type":"http","host":"files.test.invalid","id.orig_h":"192.0.2.12","id.orig_p":42222,"id.resp_h":"198.51.100.23","id.resp_p":8080,"method":"POST","proto":"tcp","status_code":201,"ts":1758955320.5,"uid":"HTTP1234567890abcd","uri":"/upload","user_agent":"TestAgent/2.0"}

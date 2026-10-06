@@ -1,0 +1,44 @@
+# Secrets / local config
+.env
+*.env
+!.env.example
+frontend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local scratch / verification SQLite files. These are regenerable byproducts
+# of running migrations or tests against a file-backed database; they hold
+# no application data and nothing in the project references them. Named
+# individually on purpose - a blanket *.db rule could hide a real fixture.
+test_tmp.db
+step26verify.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Defensive: never commit leaked logs, alternate DB formats, or key material
+*.log
+*.sqlite
+*.pem
+*.key
+*.p12
+
+# Docker / DB
+pgdata/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

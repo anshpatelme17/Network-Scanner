@@ -1,0 +1,1 @@
+{"certificate":{"issuer":"CN=Test CA","key_type":"rsa","serial":"01:23:45","subject":"CN=secure.test.invalid"},"event_type":"x509","id":"9C4B635D4F8A1234","ts":1758955440.75,"uid":"X5091234567890abcd"}

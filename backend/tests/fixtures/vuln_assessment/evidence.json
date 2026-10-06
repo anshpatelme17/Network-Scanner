@@ -1,0 +1,1 @@
+{"description": "Evidence probe $(whoami); rm -rf / && `id` <script>alert(1)</script> {{7*7}} ' OR 1=1 -- in test logs.", "evidence": "plugin output ; whoami && `id`", "references": ["https://example.test/adv-1"], "severity": "medium", "solution": "Filter '; rm -rf /' style input.", "title": "TEST Finding With Evidence"}

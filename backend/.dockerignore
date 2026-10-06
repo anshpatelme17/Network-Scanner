@@ -1,0 +1,27 @@
+# Step 31: keep the image minimal and the build context out of the layer.
+# Without this, host node_modules/dist/venv copies can bloat the context
+# and leak local files into the image.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+*.db
+*.sqlite
+*.sqlite3
+test_tmp.db
+step26verify.db
+.env
+.env.*
+!.env.example
+alembic/README
+.idea/
+.vscode/
+.git/
+.gitignore
+Dockerfile
+.dockerignore

@@ -1,0 +1,1 @@
+{"source_type": "WAZUH", "source_name": "corr-wazuh", "event_type": "WAZUH_ALERT", "severity": "LOW", "title": "Chain A wazuh alert", "event_time": "2026-09-27T06:20:00Z", "source_ip": "192.0.2.12", "destination_ip": "198.51.100.23", "destination_port": 80, "protocol": "tcp", "external_event_id": "corr-a-3"}

@@ -1,0 +1,1 @@
+{"affected_host":"192.0.2.12","cvss_score":5.4,"description":"Test medium information disclosure.","finding_id":"FIND-0003","hostname":"test-host-12","port":80,"protocol":"tcp","severity":"medium","title":"Test Medium Disclosure"}

@@ -1,0 +1,1 @@
+{"agent":{"id":"003","ip":"192.0.2.12","name":"test-agent-03"},"decoder":{"name":"sca"},"event_type":"sca","full_log":"SCA check failed: Ensure test setting is enabled.","id":"1770000004.105","location":"sca","manager":{"name":"test-manager"},"rule":{"description":"SCA: Check failed.","groups":["sca"],"id":"19005","level":5},"timestamp":"2026-09-27T06:04:00Z"}

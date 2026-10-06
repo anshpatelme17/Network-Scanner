@@ -1,0 +1,15 @@
+{
+  "name": "network-scanning",
+  "version": "1.0.0",
+  "description": "> **Step 11 — Incident management (records only).** > Incidents are opened explicitly from existing correlations (plus an > optional existing risk assessment): deterministic identity, explicit > status lifecycle, severity/confidence inherited from source records, > evidence preserved as references. Status changes record workflow only — > no response, remediation, or automation of any kind.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

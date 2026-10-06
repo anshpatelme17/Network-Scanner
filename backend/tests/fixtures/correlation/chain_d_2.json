@@ -1,0 +1,1 @@
+{"source_type": "ZEEK", "source_name": "corr-zeek", "event_type": "ZEEK_CONN", "severity": "INFO", "title": "Chain D v6 conn", "event_time": "2026-09-27T09:10:00Z", "source_ip": "2001:db8::11", "destination_ip": "2001:db8::99", "destination_port": 443, "protocol": "tcp", "external_event_id": "corr-d-2"}

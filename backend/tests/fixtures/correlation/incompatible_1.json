@@ -1,0 +1,1 @@
+{"source_type": "GENERIC", "source_name": "corr-gen", "event_type": "probe", "severity": "LOW", "title": "Incompatible one", "event_time": "2026-09-27T10:00:00Z", "source_ip": "192.0.2.52", "destination_ip": "198.51.100.60", "external_event_id": "corr-inc-1"}

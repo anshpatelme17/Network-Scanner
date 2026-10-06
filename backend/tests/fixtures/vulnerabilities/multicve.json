@@ -1,0 +1,1 @@
+{"affected_host":"192.0.2.14","cves":["CVE-2024-0010","CVE-2024-0011","not-a-cve","CVE-2024-0010"],"cvss_score":8.2,"finding_id":"FIND-0007","severity":"high","title":"Test Multi-CVE Library"}

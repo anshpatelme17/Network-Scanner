@@ -1,0 +1,1 @@
+{"alertIds":["alert-0002-a","alert-0002-b"],"deviceName":"TEST-SRV-02","event_type":"incident","id":"incident-0002","severity":"medium","status":"InProgress","timestamp":1758955260,"title":"Test multi-stage incident"}

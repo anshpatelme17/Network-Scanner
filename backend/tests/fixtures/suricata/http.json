@@ -1,0 +1,1 @@
+{"app_proto":"http","dest_ip":"198.51.100.23","dest_port":8080,"event_type":"http","flow_id":3344556677889900,"http":{"hostname":"files.test.invalid","http_method":"POST","http_user_agent":"TestAgent/2.0","status":201,"url":"/upload"},"proto":"TCP","src_ip":"192.0.2.12","src_port":42222,"timestamp":"2026-09-27T06:02:00.000000+0000"}

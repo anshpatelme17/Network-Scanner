@@ -1,0 +1,1 @@
+{"dest_ip":"198.51.100.53","dest_port":53,"dns":{"query":{"rrname":"update.test.invalid","rrtype":"A"},"rcode":"NOERROR","response":{"answers":[{"rcode":"NOERROR","rrname":"update.test.invalid","rrtype":"A","ttl":60}]}},"event_type":"dns","flow_id":2233445566778899,"proto":"UDP","src_ip":"192.0.2.11","src_port":53333,"timestamp":"2026-09-27T06:01:00.000000+0000"}

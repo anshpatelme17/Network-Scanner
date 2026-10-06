@@ -1,0 +1,1 @@
+{"source_type": "SURICATA", "source_name": "corr-sensor", "event_type": "SURICATA_ALERT", "severity": "HIGH", "title": "Chain A suricata alert", "event_time": "2026-09-27T06:00:00Z", "source_ip": "192.0.2.10", "destination_ip": "198.51.100.23", "destination_port": 80, "protocol": "tcp", "external_event_id": "corr-a-1"}

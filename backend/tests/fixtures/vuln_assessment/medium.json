@@ -1,0 +1,1 @@
+{"description": "Synthetic fixture: medium test finding.", "port": 80, "protocol": "tcp", "service": "http", "severity": "Medium", "title": "TEST Medium Fixture Finding"}

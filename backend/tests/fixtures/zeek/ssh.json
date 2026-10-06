@@ -1,0 +1,1 @@
+{"auth_success":true,"client":"TestSSH_1.0","event_type":"ssh","id.orig_h":"192.0.2.14","id.orig_p":44000,"id.resp_h":"198.51.100.22","id.resp_p":22,"proto":"tcp","server":"OpenSSH_9.3","ts":1758955500.0,"uid":"SSH1234567890abcd","version":2}

@@ -1,0 +1,17 @@
+# Pinned production + dev dependencies (Step 1 foundation).
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+pydantic==2.11.7
+pydantic-settings==2.10.1
+SQLAlchemy==2.0.43
+psycopg[binary]==3.2.9
+alembic==1.16.5
+# Step 20: Argon2id password hashing + JWT access tokens (runtime).
+PyJWT==2.15.0
+argon2-cffi==25.1.0
+# Step 27: controlled outbound HTTP for the live connector foundation
+# (Wazuh / Microsoft Defender clients; timeouts + bounded bodies).
+httpx==0.28.1
+# Test/lint-only (not needed at runtime)
+pytest==8.4.1
+ruff==0.9.10

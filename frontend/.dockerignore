@@ -1,0 +1,17 @@
+# Step 31: keep the build context minimal. node_modules is the single
+# largest directory here and must never be copied into an image layer.
+node_modules
+dist
+coverage
+.vite
+.env
+.env.*
+!.env.example
+npm-debug.log*
+*.log
+.idea/
+.vscode/
+.git/
+.gitignore
+Dockerfile
+.dockerignore

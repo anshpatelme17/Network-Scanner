@@ -1,0 +1,1 @@
+{"source_type": "SURICATA", "source_name": "corr-sensor", "event_type": "SURICATA_ALERT", "severity": "MEDIUM", "title": "Chain D v6 alert", "event_time": "2026-09-27T11:00:00+02:00", "source_ip": "2001:db8::10", "destination_ip": "2001:db8::99", "destination_port": 443, "protocol": "tcp", "external_event_id": "corr-d-1"}

@@ -1,0 +1,1 @@
+{"answers":["198.51.100.53"],"event_type":"dns","id.orig_h":"2001:db8::10","id.orig_p":53333,"id.resp_h":"2001:db8::53","id.resp_p":53,"proto":"udp","query":"update.test.invalid","qtype":1,"rcode_name":"NOERROR","ts":1758955260.0,"uid":"DNS1234567890abcd"}

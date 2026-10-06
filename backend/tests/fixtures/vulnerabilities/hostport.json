@@ -1,0 +1,1 @@
+{"affected_host":"web.test.invalid","finding_id":"FIND-0006","hostname":"web.test.invalid","ip":"198.51.100.23","plugin_id":"PLUGIN-443","port":8443,"product":"TestProxy","protocol":"TCP","service":"https-alt","severity":"high","title":"Test Host Port Protocol Finding","version":"2.1"}

@@ -1,0 +1,1 @@
+{"source_type": "VULNERABILITY_SCANNER", "source_name": "corr-scanner", "event_type": "VULNERABILITY_FINDING", "severity": "HIGH", "title": "Chain C finding", "event_time": "2026-09-27T05:00:00Z", "destination_ip": "192.0.2.50", "external_event_id": "corr-vuln"}

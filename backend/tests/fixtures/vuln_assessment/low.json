@@ -1,0 +1,1 @@
+{"port": 22, "protocol": "tcp", "service": "ssh", "severity": "low", "title": "TEST Low Fixture Finding"}

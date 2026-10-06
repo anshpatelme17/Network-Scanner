@@ -1,0 +1,1 @@
+{"action":"logon","destinationIp":"198.51.100.10","destinationPort":3389,"deviceName":"TEST-SRV-05","event_type":"authentication","eventTime":"2026-09-27T06:04:00Z","id":"alert-0005","severity":"low","sourceIp":"203.0.113.9","sourcePort":51234,"status":"Succeeded","user":"TESTDOM\\testuser"}

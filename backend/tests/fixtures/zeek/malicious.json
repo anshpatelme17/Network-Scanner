@@ -1,0 +1,1 @@
+{"event_type":"http","host":"<script>alert(1)</script>","id.orig_h":"192.0.2.18","id.resp_h":"198.51.100.23","id.resp_p":80,"method":"GET $(whoami)","ts":1758955680.0,"uid":"EVIL1234567890abcd","uri":"/x?cmd=$(whoami); rm -rf / && `id` ' OR 1=1 --","user_agent":"evil"}

@@ -1,0 +1,1 @@
+{"actions":["Notice::ACTION_LOG"],"dst":"198.51.100.99","event_type":"notice","msg":"Test scan sweep detected in lab traffic","note":"Scan::Sweep","src":"192.0.2.15","ts":1758955560.0,"uid":"NOTICE1234567890ab"}

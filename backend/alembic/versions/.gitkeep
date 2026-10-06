@@ -1,0 +1,4 @@
+# Alembic versions directory.
+# Step 1 intentionally contains no migrations (no domain tables yet).
+# Future stages add one migration per bounded context, e.g.:
+#   alembic revision --autogenerate -m "add assets table"

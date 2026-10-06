@@ -1,0 +1,1 @@
+{"app_proto":"tls","dest_ip":"198.51.100.44","dest_port":443,"event_type":"tls","flow_id":4455667788990011,"proto":"TCP","src_ip":"192.0.2.13","src_port":43333,"timestamp":"2026-09-27T06:03:00.000000+0000","tls":{"ja3":{"hash":"abcd1234"},"sni":"secure.test.invalid","subject":"CN=secure.test.invalid","version":"TLS 1.3"}}

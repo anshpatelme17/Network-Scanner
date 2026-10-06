@@ -1,0 +1,1 @@
+{"affected_host":"192.0.2.16","custom_field":"kept in raw only","finding_id":"FIND-0009","first_seen":"2026-09-01T00:00:00Z","last_seen":"2026-09-27T00:00:00Z","nested":{"extra":true},"severity":"low","status":"open","title":"Test Finding With Unknown Fields"}

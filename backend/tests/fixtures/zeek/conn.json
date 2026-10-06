@@ -1,0 +1,1 @@
+{"conn_state":"SF","dest_port":80,"duration":1.234,"event_type":"conn","id.orig_h":"192.0.2.10","id.orig_p":41234,"id.resp_h":"198.51.100.23","id.resp_p":80,"orig_bytes":512,"proto":"tcp","resp_bytes":2048,"service":"http","ts":1758955200.123456,"uid":"CONN1234567890abcd"}
