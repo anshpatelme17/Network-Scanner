@@ -855,3 +855,78 @@ export interface NmapStatus {
   version: string | null;
   profiles: string[];
 }
+
+/**
+ * SOC overview (Phase 2, Step 9) — `GET /api/v1/overview`.
+ * Field-for-field mirrors `app/schemas/soc.py`. Counts, bounded integers,
+ * stored identifiers, ISO timestamps, scores and fixed enum labels only:
+ * the payload carries no event payload, configuration value or credential.
+ */
+export interface OverviewCounts {
+  assets_total: number;
+  assets_active: number;
+  services_total: number;
+  events_total: number;
+  correlations_total: number;
+  incidents_total: number;
+  incidents_open: number;
+  risk_assessments_total: number;
+  vulnerabilities_open: number;
+  response_actions_total: number;
+  response_actions_pending_approval: number;
+}
+
+export interface OverviewIncident {
+  id: string;
+  incident_key: string;
+  title: string;
+  status: string;
+  severity: string;
+  confidence: number;
+  risk_score: number | null;
+  priority: string | null;
+  primary_asset_id: string | null;
+  primary_ip: string | null;
+  hostname: string | null;
+  correlation_id: string;
+  first_seen: string;
+  last_seen: string;
+}
+
+export interface OverviewAudit {
+  id: string;
+  action: string;
+  actor: string;
+  event_id: string | null;
+  detail: string;
+  created_at: string;
+}
+
+export interface OverviewConnector {
+  source: string;
+  mode: string;
+  state: string;
+  connector_state: string;
+  last_check_at: string | null;
+  last_poll_at: string | null;
+  last_error_category: string | null;
+  events_retrieved: number;
+}
+
+export interface OverviewLimits {
+  max_items: number;
+  requested_items: number;
+}
+
+export interface SocOverview {
+  generated_at: string;
+  version: string;
+  counts: OverviewCounts;
+  incidents_by_severity: Record<string, number>;
+  incidents_by_priority: Record<string, number>;
+  top_incidents: OverviewIncident[];
+  recent_audit: OverviewAudit[];
+  connectors: OverviewConnector[];
+  limits: OverviewLimits;
+  disclaimer: string;
+}

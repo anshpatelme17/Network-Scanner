@@ -48,6 +48,7 @@ import type {
   ScanPreview,
   ScanProfile,
   SecurityEventInfo,
+  SocOverview,
   VulnerabilityDetail,
   VulnerabilityPage,
   VulnScanJob,
@@ -219,6 +220,9 @@ export const api = {
   },
   getEvent: (id: string) => request<SecurityEventInfo>(`/api/v1/events/${encodeURIComponent(id)}`),
   getEventSummary: () => request<EventSummary>("/api/v1/events/summary"),
+  /** Phase 2, Step 9: read-only SOC overview roll-up. */
+  getSocOverview: (limit?: number) =>
+    request<SocOverview>(limit === undefined ? "/api/v1/overview" : `/api/v1/overview?limit=${limit}`),
   getConnectors: () => request<ConnectorPage>("/api/v1/events/connectors"),
   /** Step 28: read-only ingestion observability (no polling side effects). */
   getIngestionStatus: () => request<IngestionStatus>("/api/v1/events/ingestion/status"),
