@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../services/api";
+import { ApiError, api } from "../services/api";
 import type {
   IncidentAuditTrail,
   IncidentDetail,
@@ -7,8 +7,10 @@ import type {
   IncidentRelationshipsPage,
   IncidentSummary,
   IncidentTimeline,
+  ResponsePage,
   ResponseProposal,
   ResponseRecommendation,
+  ResponseRecommendations,
   RiskAssessment,
 } from "../types";
 
@@ -71,7 +73,61 @@ function severityTone(severity: string): string {
   }
 }
 
-/** Incident management (Steps 11 + 17): records over correlations/risk. Read + status only. */
+/**
+ * Phase 3, Step 34: the incident detail is organized as an analyst
+ * investigation workspace. Every independently loaded section carries its
+ * own state, so a failure or a permission denial in one section never
+ * erases the unrelated sections that succeeded.
+ */
+type SectionState = "loading" | "ready" | "error" | "denied";
+
+function isDenied(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    (err.code === "PERMISSION_DENIED" || err.status === 401 || err.status === 403)
+  );
+}
+
+async function runSection<T>(
+  fetcher: () => Promise<T>,
+  isValid: (value: unknown) => boolean,
+  setState: (state: SectionState) => void,
+  setData: (data: T | null) => void,
+): Promise<void> {
+  setState("loading");
+  try {
+    const value = await fetcher();
+    if (isValid(value)) {
+      setData(value);
+      setState("ready");
+    } else {
+      setData(null);
+      setState("error");
+    }
+  } catch (err) {
+    setData(null);
+    setState(isDenied(err) ? "denied" : "error");
+  }
+}
+
+function SectionNote({
+  state,
+  loading,
+  error,
+  denied,
+}: {
+  state: SectionState;
+  loading: string;
+  error: string;
+  denied: string;
+}) {
+  if (state === "loading") return <p className="muted">{loading}</p>;
+  if (state === "error") return <p className="muted">{error}</p>;
+  if (state === "denied") return <p className="muted">{denied}</p>;
+  return null;
+}
+
+/** Incident management (Steps 11 + 17 + 29 ...): read + status only, organized as a SOC investigation workspace (Step 34). */
 export function Incidents() {
   const [items, setItems] = useState<IncidentSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -91,6 +147,14 @@ export function Incidents() {
   const [proposeReason, setProposeReason] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
+
+  const [evidenceState, setEvidenceState] = useState<SectionState>("loading");
+  const [relationshipsState, setRelationshipsState] = useState<SectionState>("loading");
+  const [timelineState, setTimelineState] = useState<SectionState>("loading");
+  const [auditState, setAuditState] = useState<SectionState>("loading");
+  const [responsesState, setResponsesState] = useState<SectionState>("loading");
+  const [recommendationsState, setRecommendationsState] = useState<SectionState>("loading");
+  const [riskState, setRiskState] = useState<SectionState>("loading");
 
   const load = useCallback(
     async (statusValue: string, severityValue: string, typeValue: string) => {
@@ -124,56 +188,66 @@ export function Incidents() {
       setSelected(null);
       return;
     }
-    // Rich Step 17 sections load independently; any failure leaves an
-    // honest empty section instead of breaking the detail view.
-    try {
-      const body = await api.getIncidentEvidence(id);
-      setEvidence(body && Array.isArray(body.events) ? body : null);
-    } catch {
-      setEvidence(null);
-    }
-    // Step 29 stored relationships (independent fetch; honest absence).
-    try {
-      const body = await api.getIncidentRelationships(id);
-      setRelationships(body && Array.isArray(body.items) ? body : null);
-    } catch {
-      setRelationships(null);
-    }
+    // Every investigation section loads independently underneath. A failure
+    // or denial in one never erases the sections that succeeded.
+    void runSection(
+      () => api.getIncidentEvidence(id),
+      (value) =>
+        value !== null && typeof value === "object" && Array.isArray((value as IncidentEvidence).events),
+      setEvidenceState,
+      setEvidence,
+    );
+    void runSection(
+      () => api.getIncidentRelationships(id),
+      (value) =>
+        value !== null &&
+        typeof value === "object" &&
+        Array.isArray((value as IncidentRelationshipsPage).items),
+      setRelationshipsState,
+      setRelationships,
+    );
     setAnalysisNotice(null);
-    try {
-      const body = await api.getIncidentTimeline(id);
-      setTimeline(body && Array.isArray(body.entries) ? body : null);
-    } catch {
-      setTimeline(null);
-    }
-    try {
-      const body = await api.getIncidentAudit(id);
-      setAudit(body && Array.isArray(body.entries) ? body : null);
-    } catch {
-      setAudit(null);
-    }
-    // Step 18 controlled responses for this incident (safe actions only).
-    try {
-      const page = await api.getIncidentResponses(id);
-      setResponses(Array.isArray(page.items) ? page.items : []);
-    } catch {
-      setResponses([]);
-    }
-    // Step 30: deterministic, evidence-backed response suggestions.
-    try {
-      const page = await api.getIncidentResponseRecommendations(id);
-      setRecommendations(Array.isArray(page.items) ? page.items : []);
-    } catch {
-      setRecommendations([]);
-    }
-    // Step 25 advisory incident risk (independent fetch, honest empty).
+    void runSection(
+      () => api.getIncidentTimeline(id),
+      (value) =>
+        value !== null && typeof value === "object" && Array.isArray((value as IncidentTimeline).entries),
+      setTimelineState,
+      setTimeline,
+    );
+    void runSection(
+      () => api.getIncidentAudit(id),
+      (value) =>
+        value !== null && typeof value === "object" && Array.isArray((value as IncidentAuditTrail).entries),
+      setAuditState,
+      setAudit,
+    );
+    void runSection(
+      () => api.getIncidentResponses(id),
+      (value) =>
+        value !== null && typeof value === "object" && Array.isArray((value as ResponsePage).items),
+      setResponsesState,
+      (page) => setResponses(page && Array.isArray(page.items) ? page.items : []),
+    );
+    void runSection(
+      () => api.getIncidentResponseRecommendations(id),
+      (value) =>
+        value !== null &&
+        typeof value === "object" &&
+        Array.isArray((value as ResponseRecommendations).items),
+      setRecommendationsState,
+      (page) => setRecommendations(page && Array.isArray(page.items) ? page.items : []),
+    );
+    // Advisory incident risk: absence and a failed lookup both degrade to
+    // the honest unscored state — the analyst can still ask the server to
+    // calculate a score, and no number is ever invented here.
+    setRiskState("loading");
     try {
       const assessment = await api.getRiskDetail("incident", id);
-      setIncidentRisk(
-        assessment && typeof assessment.score === "number" ? assessment : null,
-      );
+      setIncidentRisk(assessment && typeof assessment.score === "number" ? assessment : null);
     } catch {
       setIncidentRisk(null);
+    } finally {
+      setRiskState("ready");
     }
   };
 
@@ -204,16 +278,20 @@ export function Incidents() {
 
   const calculateRisk = async (id: string) => {
     setNotice(null);
+    setRiskState("loading");
     try {
       setIncidentRisk(await api.calculateIncidentRisk(id));
     } catch {
       setNotice("Risk calculation was rejected by the server.");
+    } finally {
+      setRiskState("ready");
     }
   };
 
   /** Step 29: bounded, parameter-free server-side analysis (no client rules). */
   const recalculateAnalysis = async (id: string) => {
     setAnalysisNotice(null);
+    setRelationshipsState("loading");
     try {
       const result = await api.recalculateIncident(id);
       setAnalysisNotice(
@@ -223,8 +301,10 @@ export function Incidents() {
       );
       const page = await api.getIncidentRelationships(id);
       setRelationships(page && Array.isArray(page.items) ? page : null);
+      setRelationshipsState(page && Array.isArray(page.items) ? "ready" : "error");
     } catch {
       setAnalysisNotice("Recalculation was refused by the server (permission or input).");
+      setRelationshipsState("error");
     }
   };
 
@@ -252,8 +332,10 @@ export function Incidents() {
     try {
       const page = await api.getIncidentResponses(id);
       setResponses(Array.isArray(page.items) ? page.items : []);
+      setResponsesState("ready");
     } catch {
       setResponses([]);
+      setResponsesState("error");
     }
     // Safe executions can move incident workflow state — refresh it.
     try {
@@ -296,6 +378,32 @@ export function Incidents() {
       setNotice("Response execution was refused by policy.");
     }
   };
+
+  const closeDetail = () => {
+    setSelected(null);
+    setEvidence(null);
+    setRelationships(null);
+    setAnalysisNotice(null);
+    setTimeline(null);
+    setAudit(null);
+    setResponses([]);
+    setRecommendations([]);
+    setIncidentRisk(null);
+    setEvidenceState("loading");
+    setRelationshipsState("loading");
+    setTimelineState("loading");
+    setAuditState("loading");
+    setResponsesState("loading");
+    setRecommendationsState("loading");
+    setRiskState("loading");
+  };
+
+  const evidenceEmpty =
+    selected?.evidence_event_ids.length === 0 &&
+    (evidence?.vulnerabilities.length ?? 0) === 0 &&
+    !evidence?.correlation &&
+    (evidence?.correlation_rules?.length ?? 0) === 0 &&
+    (evidence?.assets?.length ?? 0) === 0;
 
   return (
     <section aria-label="Incident management">
@@ -452,6 +560,7 @@ export function Incidents() {
 
       {selected && (
         <div className="card" aria-label="Incident detail">
+          {/* A. Incident header / summary */}
           <h3>
             {selected.incident_key} — {selected.title}
           </h3>
@@ -470,132 +579,107 @@ export function Incidents() {
             (when present) — the two are distinct. This record is an
             evidence-based investigation lead, not proof of compromise.
           </p>
-          {selected.detection_reason && (
-            <p>
-              <strong>Why this incident exists: </strong>
-              {selected.detection_reason}
-            </p>
-          )}
-          <h3>Advisory risk</h3>
-          {incidentRisk === null ? (
-            <div>
-              <p className="muted">
-                No incident risk calculated yet. Calculation scores stored
-                evidence only — it is advisory, not an automated response,
-                and never proof of compromise.
-              </p>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => void calculateRisk(selected.id)}
-              >
-                Calculate risk
-              </button>
-            </div>
-          ) : (
-            <div>
-              <p>
-                <strong>
-                  {incidentRisk.score} ({incidentRisk.severity})
-                </strong>{" "}
-                <span className="badge neutral">priority {incidentRisk.priority}</span>{" "}
-                <span className="muted">
-                  scoring v{incidentRisk.scoring_version} · calculated{" "}
-                  {formatDateTime(incidentRisk.calculated_at)}
-                </span>
-              </p>
-              <p>{incidentRisk.explanation}</p>
-              <p className="muted">
-                Factors:{" "}
-                {Object.entries(incidentRisk.factors ?? {})
-                  .map(([key, value]) => `${key}=${String(value)}`)
-                  .join(" · ")}
-              </p>
-              <p className="muted">
-                CALCULATED RISK — advisory classification only, not an automated response.
-              </p>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => void calculateRisk(selected.id)}
-              >
-                Recalculate risk
-              </button>
-            </div>
-          )}
           <p className="muted">
             Correlation: {selected.correlation_id} · Risk: {selected.risk_assessment_id ?? "—"} ·
             Asset: {selected.primary_ip ?? "—"} · First seen{" "}
             {formatDateTime(selected.first_seen)} · Last seen {formatDateTime(selected.last_seen)} ·
             Resolved: {formatDateTime(selected.resolved_at)}
           </p>
-          <h3>Supporting evidence ({selected.evidence_event_ids.length} events)</h3>
-          {evidence && (
-            <p className="muted">
-              Correlated observations: {evidence.events.length} event(s) ·{" "}
-              {evidence.vulnerabilities.length} vulnerability finding(s) ·{" "}
-              {evidence.correlation ? "1 correlation" : "0 correlations"} — references only, never
-              payload copies.
+
+          {/* B. What happened? */}
+          <h4>What happened?</h4>
+          {selected.detection_reason && (
+            <p>
+              <strong>Why this incident exists: </strong>
+              {selected.detection_reason}
             </p>
           )}
-          {evidence && (evidence.evidence_count !== undefined || evidence.entities) && (
-            <p className="muted">
-              {typeof evidence.evidence_count === "number" &&
-                `Evidence count ${evidence.evidence_count}${evidence.truncated ? " (truncated at the configured bound)" : ""} · `}
-              {evidence.first_observed && (
-                <>first observed {formatDateTime(evidence.first_observed)} · </>
+          <p className="muted">
+            Severity {selected.severity} · Confidence {selected.confidence} · Status {selected.status}{" "}
+            · First seen {formatDateTime(selected.first_seen)} · Last seen{" "}
+            {formatDateTime(selected.last_seen)} · Created {formatDateTime(selected.created_at)} ·
+            Updated {formatDateTime(selected.updated_at)}
+          </p>
+
+          {/* C. What evidence supports it? */}
+          <h4>What evidence supports it?</h4>
+          <SectionNote
+            state={evidenceState}
+            loading="Loading supporting evidence…"
+            error="Supporting evidence could not be loaded."
+            denied="Supporting evidence is restricted for your account."
+          />
+          {evidenceState === "ready" && evidence && (
+            <>
+              <p className="muted">
+                Correlated observations: {evidence.events.length} event(s) ·{" "}
+                {evidence.vulnerabilities.length} vulnerability finding(s) ·{" "}
+                {evidence.correlation ? "1 correlation" : "0 correlations"} — references only, never
+                payload copies.
+              </p>
+              {(evidence.evidence_count !== undefined || evidence.entities) && (
+                <p className="muted">
+                  {typeof evidence.evidence_count === "number" &&
+                    `Evidence count ${evidence.evidence_count}${evidence.truncated ? " (truncated at the configured bound)" : ""} · `}
+                  {evidence.first_observed && (
+                    <>first observed {formatDateTime(evidence.first_observed)} · </>
+                  )}
+                  {evidence.last_observed && <>last observed {formatDateTime(evidence.last_observed)} · </>}
+                  {evidence.entities && (
+                    <>
+                      entities — source IPs{" "}
+                      {evidence.entities.source_ips.length ? evidence.entities.source_ips.join(", ") : "none recorded"}{" "}
+                      · destinations{" "}
+                      {evidence.entities.destination_ips.length
+                        ? evidence.entities.destination_ips.join(", ")
+                        : "none recorded"}{" "}
+                      · users{" "}
+                      {evidence.entities.usernames.length ? evidence.entities.usernames.join(", ") : "none recorded"}
+                    </>
+                  )}
+                </p>
               )}
-              {evidence.last_observed && <>last observed {formatDateTime(evidence.last_observed)} · </>}
-              {evidence.entities && (
-                <>
-                  entities — source IPs{" "}
-                  {evidence.entities.source_ips.length ? evidence.entities.source_ips.join(", ") : "none recorded"}{" "}
-                  · destinations{" "}
-                  {evidence.entities.destination_ips.length
-                    ? evidence.entities.destination_ips.join(", ")
-                    : "none recorded"}{" "}
-                  · users{" "}
-                  {evidence.entities.usernames.length ? evidence.entities.usernames.join(", ") : "none recorded"}
-                </>
+              {(evidence.assets?.length ?? 0) > 0 && (
+                <p className="muted">
+                  Affected assets (stored inventory only):{" "}
+                  {(evidence.assets ?? [])
+                    .map((asset) => asset.hostname ?? asset.ip_address)
+                    .join(" · ")}
+                </p>
               )}
-            </p>
-          )}
-          {evidence && (evidence.assets?.length ?? 0) > 0 && (
-            <p className="muted">
-              Affected assets (stored inventory only):{" "}
-              {(evidence.assets ?? [])
-                .map((asset) => asset.hostname ?? asset.ip_address)
-                .join(" · ")}
-            </p>
+            </>
           )}
           {selected.evidence_event_ids.length === 0 ? (
             <p className="muted">No evidence references.</p>
           ) : (
-            <ul>
-              {selected.evidence_event_ids.map((eventId) => {
-                const rich = evidence?.events.find((item) => item.id === eventId);
-                return (
-                  <li key={eventId} style={{ marginBottom: 4 }}>
-                    <a href={`/events?event=${encodeURIComponent(eventId)}`}>
-                      <code>{eventId}</code>
-                    </a>
-                    {rich && (
-                      <span className="muted">
-                        {" "}
-                        · {rich.event_type} · {rich.severity} · {rich.title}
-                        {rich.role ? ` (${rich.role})` : ""}
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          {evidence && evidence.vulnerabilities.length > 0 && (
             <>
-              <h3>Related vulnerability findings ({evidence.vulnerabilities.length})</h3>
+              <h5>Supporting evidence ({selected.evidence_event_ids.length} events)</h5>
               <ul>
-                {evidence.vulnerabilities.map((finding) => (
+                {selected.evidence_event_ids.map((eventId) => {
+                  const rich = evidence?.events.find((item) => item.id === eventId);
+                  return (
+                    <li key={eventId} style={{ marginBottom: 4 }}>
+                      <a href={`/events?event=${encodeURIComponent(eventId)}`}>
+                        <code>{eventId}</code>
+                      </a>
+                      {rich && (
+                        <span className="muted">
+                          {" "}
+                          · {rich.event_type} · {rich.severity} · {rich.title}
+                          {rich.role ? ` (${rich.role})` : ""}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          {evidenceState === "ready" && (evidence?.vulnerabilities.length ?? 0) > 0 && (
+            <>
+              <h5>Related vulnerability findings ({evidence?.vulnerabilities.length ?? 0})</h5>
+              <ul>
+                {(evidence?.vulnerabilities ?? []).map((finding) => (
                   <li key={finding.id} style={{ marginBottom: 4 }}>
                     <strong>{finding.title}</strong>{" "}
                     <span className={`badge ${severityTone(finding.severity)}`}>
@@ -609,18 +693,18 @@ export function Incidents() {
               </ul>
             </>
           )}
-          {evidence?.correlation && (
+          {evidenceState === "ready" && evidence?.correlation && (
             <>
-              <h3>Correlation explanation</h3>
+              <h5>Correlation explanation</h5>
               <p>
                 {evidence.correlation.rule_name} (confidence {evidence.correlation.confidence}):{" "}
                 {evidence.correlation.explanation}
               </p>
             </>
           )}
-          {(evidence?.correlation_rules?.length ?? 0) > 0 && (
+          {evidenceState === "ready" && (evidence?.correlation_rules?.length ?? 0) > 0 && (
             <>
-              <h3>Correlation rules ({evidence?.correlation_rules?.length ?? 0})</h3>
+              <h5>Correlation rules ({evidence?.correlation_rules?.length ?? 0})</h5>
               <ul>
                 {(evidence?.correlation_rules ?? []).map((rule) => (
                   <li key={rule.rule_id} style={{ marginBottom: 4 }}>
@@ -635,9 +719,21 @@ export function Incidents() {
               </ul>
             </>
           )}
-          {relationships && (
+          {evidenceState === "ready" && evidenceEmpty && (
+            <p className="muted">No supporting evidence is stored for this incident yet.</p>
+          )}
+
+          {/* D. What relationships exist? */}
+          <h4>What relationships exist?</h4>
+          <SectionNote
+            state={relationshipsState}
+            loading="Loading stored relationships…"
+            error="Stored relationships could not be loaded."
+            denied="Stored relationships are restricted for your account."
+          />
+          {relationshipsState === "ready" && relationships && (
             <>
-              <h3>Relationship analysis ({relationships.items.length})</h3>
+              <h5>Relationship analysis ({relationships.items.length})</h5>
               <p className="muted">
                 Deterministic field matches over stored evidence — every row names its
                 rule, window and reason. Labels describe the rule&apos;s confidence, not a
@@ -692,9 +788,18 @@ export function Incidents() {
               )}
             </>
           )}
-          {timeline && timeline.entries.length > 0 && (
+
+          {/* E. When did it happen? */}
+          <h4>When did it happen?</h4>
+          <SectionNote
+            state={timelineState}
+            loading="Loading timeline…"
+            error="Timeline could not be loaded."
+            denied="Timeline is restricted for your account."
+          />
+          {timelineState === "ready" && timeline && timeline.entries.length > 0 && (
             <>
-              <h3>Timeline ({timeline.entries.length})</h3>
+              <h5>Timeline ({timeline.entries.length})</h5>
               <ul>
                 {timeline.entries.map((entry, index) => (
                   <li key={`${entry.kind}-${index}`} style={{ marginBottom: 4 }}>
@@ -716,9 +821,73 @@ export function Incidents() {
               </ul>
             </>
           )}
-          {audit && audit.entries.length > 0 && (
+          {timelineState === "ready" && (timeline?.entries.length ?? 0) === 0 && (
+            <p className="muted">No timeline entries are stored yet.</p>
+          )}
+
+          {/* F. What is the current assessment? */}
+          <h4>What is the current assessment?</h4>
+          <h5>Advisory risk</h5>
+          {riskState === "loading" && <p className="muted">Loading incident risk…</p>}
+          {riskState === "ready" && incidentRisk === null && (
+            <div>
+              <p className="muted">
+                No incident risk calculated yet. Calculation scores stored
+                evidence only — it is advisory, not an automated response,
+                and never proof of compromise.
+              </p>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void calculateRisk(selected.id)}
+              >
+                Calculate risk
+              </button>
+            </div>
+          )}
+          {riskState === "ready" && incidentRisk && (
+            <div>
+              <p>
+                <strong>
+                  {incidentRisk.score} ({incidentRisk.severity})
+                </strong>{" "}
+                <span className="badge neutral">priority {incidentRisk.priority}</span>{" "}
+                <span className="muted">
+                  scoring v{incidentRisk.scoring_version} · calculated{" "}
+                  {formatDateTime(incidentRisk.calculated_at)}
+                </span>
+              </p>
+              <p>{incidentRisk.explanation}</p>
+              <p className="muted">
+                Factors:{" "}
+                {Object.entries(incidentRisk.factors ?? {})
+                  .map(([key, value]) => `${key}=${String(value)}`)
+                  .join(" · ")}
+              </p>
+              <p className="muted">
+                CALCULATED RISK — advisory classification only, not an automated response.
+              </p>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void calculateRisk(selected.id)}
+              >
+                Recalculate risk
+              </button>
+            </div>
+          )}
+
+          {/* G. What happened to the record? */}
+          <h4>What happened to the record?</h4>
+          <SectionNote
+            state={auditState}
+            loading="Loading audit history…"
+            error="Audit history could not be loaded."
+            denied="Audit history is restricted for your account."
+          />
+          {auditState === "ready" && audit && audit.entries.length > 0 && (
             <>
-              <h3>Audit history ({audit.entries.length})</h3>
+              <h5>Audit history ({audit.entries.length})</h5>
               <ul>
                 {audit.entries.map((entry, index) => (
                   <li key={`${entry.action}-${index}`} style={{ marginBottom: 4 }}>
@@ -730,7 +899,19 @@ export function Incidents() {
               </ul>
             </>
           )}
-          <h3>Controlled responses ({responses.length})</h3>
+          {auditState === "ready" && (audit?.entries.length ?? 0) === 0 && (
+            <p className="muted">No audit entries are stored yet.</p>
+          )}
+
+          {/* H. What can happen next? */}
+          <h4>What can happen next?</h4>
+          <SectionNote
+            state={responsesState}
+            loading="Loading responses…"
+            error="Responses could not be loaded."
+            denied="Responses are restricted for your account."
+          />
+          <h5>Controlled responses ({responses.length})</h5>
           <p className="muted">
             Safe foundation actions only — they affect workflow records, never
             external systems. Every proposal needs approval before it can run.
@@ -825,7 +1006,13 @@ export function Incidents() {
             never executed from this screen. No machine learning is
             involved and no risk score can act on its own.
           */}
-          <h3>Recommended defensive responses ({recommendations.length})</h3>
+          <SectionNote
+            state={recommendationsState}
+            loading="Loading recommended responses…"
+            error="Recommended responses could not be loaded."
+            denied="Recommended responses are restricted for your account."
+          />
+          <h5>Recommended defensive responses ({recommendations.length})</h5>
           <p className="muted">
             Suggestions are computed from this incident&apos;s stored evidence. Requesting one
             only opens a request that still needs a second approver — nothing here executes
@@ -883,20 +1070,7 @@ export function Incidents() {
             </div>
           )}
           <p style={{ marginTop: 12 }}>
-            <button
-              className="button secondary"
-              type="button"
-              onClick={() => {
-                setSelected(null);
-                setEvidence(null);
-                setRelationships(null);
-                setAnalysisNotice(null);
-                setTimeline(null);
-                setAudit(null);
-                setResponses([]);
-                setIncidentRisk(null);
-              }}
-            >
+            <button className="button secondary" type="button" onClick={closeDetail}>
               Close incident
             </button>
           </p>

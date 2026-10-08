@@ -92,6 +92,8 @@ a { color: inherit; }
   margin-bottom: 18px;
 }
 .card h3 { margin: 0 0 6px; font-size: 1rem; }
+.card h4 { margin: 16px 0 6px; font-size: 0.95rem; }
+.card h5 { margin: 12px 0 4px; font-size: 0.88rem; color: var(--text-muted); }
 .card p { margin: 6px 0; color: var(--text-muted); font-size: 0.92rem; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 18px; }
