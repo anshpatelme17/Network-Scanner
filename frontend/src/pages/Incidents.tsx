@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { IncidentTimeline as IncidentTimelineSection } from "../components/incidents/IncidentTimeline";
 import { ApiError, api } from "../services/api";
 import type {
   IncidentAuditTrail,
@@ -306,6 +307,18 @@ export function Incidents() {
       setAnalysisNotice("Recalculation was refused by the server (permission or input).");
       setRelationshipsState("error");
     }
+  };
+
+  /** Step 35: reload just the timeline section without touching the others. */
+  const reloadTimeline = async () => {
+    if (!selected) return;
+    await runSection(
+      () => api.getIncidentTimeline(selected.id),
+      (value) =>
+        value !== null && typeof value === "object" && Array.isArray((value as IncidentTimeline).entries),
+      setTimelineState,
+      setTimeline,
+    );
   };
 
   const requestControlledAction = async (item: ResponseRecommendation) => {
@@ -791,39 +804,11 @@ export function Incidents() {
 
           {/* E. When did it happen? */}
           <h4>When did it happen?</h4>
-          <SectionNote
+          <IncidentTimelineSection
+            timeline={timeline}
             state={timelineState}
-            loading="Loading timeline…"
-            error="Timeline could not be loaded."
-            denied="Timeline is restricted for your account."
+            onReload={() => void reloadTimeline()}
           />
-          {timelineState === "ready" && timeline && timeline.entries.length > 0 && (
-            <>
-              <h5>Timeline ({timeline.entries.length})</h5>
-              <ul>
-                {timeline.entries.map((entry, index) => (
-                  <li key={`${entry.kind}-${index}`} style={{ marginBottom: 4 }}>
-                    <span className="badge neutral">{entry.kind}</span> <strong>{entry.label}</strong>{" "}
-                    <span className="muted">{formatDateTime(entry.at)}</span>
-                    {entry.detail && <span className="muted"> · {entry.detail}</span>}
-                    {entry.event_id && (
-                      <span className="muted">
-                        {" · entity "}
-                        {entry.entity ?? "unknown"}
-                        {entry.explanation ? ` · ${entry.explanation}` : ""} ·{" "}
-                        <a href={`/events?event=${encodeURIComponent(entry.event_id)}`}>
-                          <code>{entry.event_id}</code>
-                        </a>
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {timelineState === "ready" && (timeline?.entries.length ?? 0) === 0 && (
-            <p className="muted">No timeline entries are stored yet.</p>
-          )}
 
           {/* F. What is the current assessment? */}
           <h4>What is the current assessment?</h4>
