@@ -58,6 +58,7 @@ a { color: inherit; }
 .nav a:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
 .nav a.active { background: rgba(255, 255, 255, 0.14); color: #fff; font-weight: 600; }
 .nav .nav-note { font-size: 0.72rem; color: #8ea1bd; padding: 12px 12px 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.nav-divider { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.16); margin: 12px 12px 6px; }
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
@@ -130,5 +131,6 @@ a { color: inherit; }
   .app-shell { flex-direction: column; }
   .sidebar { width: 100%; flex-direction: column; }
   .nav { flex-direction: row; flex-wrap: wrap; }
+  .nav-divider { width: 1px; height: 22px; border-top: 0; border-left: 1px solid rgba(255, 255, 255, 0.16); margin: 4px 8px; align-self: center; }
   .content { padding: 18px; }
 }

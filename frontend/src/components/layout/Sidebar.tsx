@@ -1,17 +1,52 @@
+import { Fragment } from "react";
 import { NavLink } from "react-router-dom";
 
-const LINKS = [
-  { to: "/", label: "Dashboard" },
-  { to: "/assets", label: "Assets" },
-  { to: "/events", label: "Events" },
-  { to: "/correlations", label: "Correlations" },
-  { to: "/risk", label: "Risk" },
-  { to: "/incidents", label: "Incidents" },
-  { to: "/network", label: "Network" },
-  { to: "/vulnerabilities", label: "Vulnerabilities" },
-  { to: "/response", label: "Response" },
-  { to: "/settings", label: "Settings" },
-  { to: "/login", label: "Login" },
+interface NavEntry {
+  to: string;
+  label: string;
+  end?: boolean;
+}
+
+/**
+ * Phase 3, Step 33: the sidebar is grouped into SOC workspaces. This is a
+ * navigation/UX organization only — every route, API call and safety
+ * boundary is untouched. Group labels are plain text (spans), never links,
+ * so they cannot be mistaken for destinations.
+ */
+const GROUPS: Array<{ title: string; links: NavEntry[] }> = [
+  {
+    title: "Monitor",
+    links: [
+      { to: "/", label: "Dashboard", end: true },
+      { to: "/events", label: "Events" },
+    ],
+  },
+  {
+    title: "Investigate",
+    links: [
+      { to: "/incidents", label: "Incidents" },
+      { to: "/correlations", label: "Correlations" },
+      { to: "/assets", label: "Assets" },
+    ],
+  },
+  {
+    title: "Assess",
+    links: [
+      { to: "/risk", label: "Risk" },
+      { to: "/vulnerabilities", label: "Vulnerabilities" },
+    ],
+  },
+  {
+    title: "Operate",
+    links: [
+      { to: "/network", label: "Network" },
+      { to: "/response", label: "Response" },
+    ],
+  },
+  {
+    title: "Administration",
+    links: [{ to: "/settings", label: "Settings" }],
+  },
 ];
 
 export function Sidebar() {
@@ -22,17 +57,25 @@ export function Sidebar() {
         <p>SOC Console · v0.1.0</p>
       </div>
       <nav className="nav">
-        <span className="nav-note">Operate</span>
-        {LINKS.map((link) => (
-          <NavLink
-            key={link.to}
-            to={link.to}
-            end={link.to === "/"}
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            {link.label}
-          </NavLink>
+        {GROUPS.map((group) => (
+          <Fragment key={group.title}>
+            <span className="nav-note">{group.title}</span>
+            {group.links.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={link.end}
+                className={({ isActive }) => (isActive ? "active" : "")}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </Fragment>
         ))}
+        <hr className="nav-divider" />
+        <NavLink to="/login" className={({ isActive }) => (isActive ? "active" : "")}>
+          Login
+        </NavLink>
       </nav>
     </aside>
   );
