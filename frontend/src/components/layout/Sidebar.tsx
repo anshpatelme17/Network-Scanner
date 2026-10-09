@@ -19,6 +19,7 @@ const GROUPS: Array<{ title: string; links: NavEntry[] }> = [
     links: [
       { to: "/", label: "Dashboard", end: true },
       { to: "/events", label: "Events" },
+      { to: "/triage", label: "Triage" },
     ],
   },
   {

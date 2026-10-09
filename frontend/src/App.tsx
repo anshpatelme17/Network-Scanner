@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { SessionProvider } from "./context/SessionContext";
 import { AppLayout } from "./layouts/AppLayout";
+import { AlertTriage } from "./pages/AlertTriage";
 import { AssetWorkspace } from "./pages/AssetWorkspace";
 import { Assets } from "./pages/Assets";
 import { Correlations } from "./pages/Correlations";
@@ -30,6 +31,7 @@ export function App() {
             <Route path="assets" element={<Assets />} />
             <Route path="assets/:assetId" element={<AssetWorkspace />} />
             <Route path="events" element={<Events />} />
+            <Route path="triage" element={<AlertTriage />} />
             <Route path="correlations" element={<Correlations />} />
             <Route path="risk" element={<Risk />} />
             <Route path="incidents" element={<Incidents />} />
