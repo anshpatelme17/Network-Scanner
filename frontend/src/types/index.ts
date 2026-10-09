@@ -56,6 +56,24 @@ export interface InventorySummary {
   last_scan_status: string | null;
 }
 
+/**
+ * Step 36: aggregate stored finding risk for one asset, exactly as
+ * GET /api/v1/assets/{asset_id}/vuln-risk returns it. Advisory counts over
+ * stored findings only — not an asset state, not a compromise claim, and
+ * never computed in the browser.
+ */
+export interface AssetVulnRisk {
+  asset_id: string;
+  finding_count: number;
+  highest_severity: string;
+  highest_cvss: number | null;
+  critical_count: number;
+  high_count: number;
+  aggregate_risk: number;
+  risk_level: string;
+  calculated_at: string | null;
+}
+
 export interface ConnectorStatus {
   source: string;
   mode: string;

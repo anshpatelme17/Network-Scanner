@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../services/api";
 import type { AssetDetail, AssetSummary } from "../types";
 
@@ -178,6 +179,13 @@ export function Assets() {
             </table>
           )}
           <p style={{ marginTop: 12 }}>
+            <Link
+              className="button"
+              to={`/assets/${selected.id}`}
+              style={{ textDecoration: "none", marginRight: 8 }}
+            >
+              Investigate
+            </Link>
             <button className="button secondary" type="button" onClick={() => setSelected(null)}>
               Close details
             </button>

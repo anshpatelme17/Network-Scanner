@@ -6,6 +6,7 @@ import type {
   AdapterPreview,
   AssetDetail,
   AssetPage,
+  AssetVulnRisk,
   AttackChain,
   AuthUser,
   ConnectorPage,
@@ -184,6 +185,9 @@ export const api = {
     return request<AssetPage>(`/api/v1/assets?${query.toString()}`);
   },
   getAsset: (id: string) => request<AssetDetail>(`/api/v1/assets/${encodeURIComponent(id)}`),
+  /** Step 36: aggregate finding risk for one asset (server-capped, read-only). */
+  getAssetVulnRisk: (id: string) =>
+    request<AssetVulnRisk>(`/api/v1/assets/${encodeURIComponent(id)}/vuln-risk`),
   getInventorySummary: () => request<InventorySummary>("/api/v1/assets/summary"),
   getNmapStatus: () => request<NmapStatus>("/api/v1/network/nmap/status"),
   createScan: (target: string, scan_profile: ScanProfile, requested_by = "operator") =>
@@ -208,12 +212,15 @@ export const api = {
   getEvents: (params?: {
     severity?: string;
     source_type?: string;
+    /** Step 36: backend matches SecurityEvent.asset_id exactly. */
+    asset_id?: string;
     limit?: number;
     offset?: number;
   }) => {
     const query = new URLSearchParams();
     if (params?.severity) query.set("severity", params.severity);
     if (params?.source_type) query.set("source_type", params.source_type);
+    if (params?.asset_id) query.set("asset_id", params.asset_id);
     query.set("limit", String(params?.limit ?? 50));
     query.set("offset", String(params?.offset ?? 0));
     return request<EventPage>(`/api/v1/events?${query.toString()}`);
