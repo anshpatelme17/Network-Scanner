@@ -431,6 +431,72 @@ def _persist_assessment(
     return existing, False, changed
 
 
+def current_incident_assessment(db: Session, incident_id: str) -> RiskAssessment | None:
+    """The incident's authoritative assessment for the current scoring version.
+
+    Deterministic identity (``entity_type == "incident"`` plus the current
+    :data:`SCORING_VERSION`) means this is a single row: the one the single
+    and global calculation paths upsert. ``None`` when the incident has
+    never been scored, or when its assessment was evicted by a recompute.
+    """
+    return db.scalar(
+        select(RiskAssessment).where(RiskAssessment.id == assessment_id(ENTITY_INCIDENT, incident_id))
+    )
+
+
+def sync_incident_snapshot(db: Session, incident: Incident) -> RiskAssessment | None:
+    """Align the incident's compatibility snapshot with its assessment.
+
+    ``Incident.risk_assessment_id`` and ``Incident.risk_score`` are a
+    denormalized mirror of the incident's authoritative assessment (see
+    :func:`current_incident_assessment`). When the assessment exists the
+    snapshot points at it and copies its score; when it does not, both
+    fields are cleared so a score can never outlive its assessment. A
+    missing assessment is therefore ``(NULL, NULL)`` — never confused with
+    a valid assessment whose score is ``0``.
+
+    The caller owns the transaction; this never commits.
+    """
+    row = current_incident_assessment(db, incident.id)
+    if row is None:
+        incident.risk_assessment_id = None
+        incident.risk_score = None
+        return None
+    incident.risk_assessment_id = row.id
+    incident.risk_score = row.score
+    return row
+
+
+def _sync_incident_snapshots(
+    db: Session,
+    scored: list[Incident],
+    evicted_incident_ids: set[str],
+) -> None:
+    """Batched snapshot refresh after a global recompute. Never commits."""
+    if scored:
+        scores = dict(
+            db.execute(
+                select(RiskAssessment.entity_id, RiskAssessment.score)
+                .where(RiskAssessment.entity_type == ENTITY_INCIDENT)
+                .where(RiskAssessment.entity_id.in_([incident.id for incident in scored]))
+            ).all()
+        )
+        for incident in scored:
+            own_id = assessment_id(ENTITY_INCIDENT, incident.id)
+            if incident.id in scores:
+                incident.risk_assessment_id = own_id
+                incident.risk_score = scores[incident.id]
+            else:
+                incident.risk_assessment_id = None
+                incident.risk_score = None
+    if evicted_incident_ids:
+        for incident in db.scalars(
+            select(Incident).where(Incident.id.in_(evicted_incident_ids))
+        ).all():
+            incident.risk_assessment_id = None
+            incident.risk_score = None
+
+
 def recompute_risk(db: Session, actor: str = "system") -> dict[str, object]:
     """Score all assets, findings, correlations, and incidents. Deterministic upserts."""
     reference = db.scalar(select(func.max(SecurityEvent.event_time)))
@@ -579,6 +645,7 @@ def recompute_risk(db: Session, actor: str = "system") -> dict[str, object]:
                 .group_by(IncidentRelationship.incident_id)
             ).all()
         )
+    scored_incidents: list[Incident] = []
     for incident in incidents:
         links = db.scalars(
             select(IncidentEvidence).where(IncidentEvidence.incident_id == incident.id)
@@ -595,13 +662,23 @@ def recompute_risk(db: Session, actor: str = "system") -> dict[str, object]:
             relationship_count=relationship_counts.get(incident.id, 0),
         )
         _store(ENTITY_INCIDENT, incident.id, result)
+        scored_incidents.append(incident)
         if len(assessed) >= MAX_ASSESSMENTS:
             break
 
     # Drop assessments whose entity no longer exists (deterministic set).
+    evicted_incident_ids: set[str] = set()
     for row in db.scalars(select(RiskAssessment)).all():
         if (row.entity_type, row.entity_id) not in assessed:
+            if row.entity_type == ENTITY_INCIDENT:
+                evicted_incident_ids.add(row.entity_id)
             db.delete(row)
+    db.flush()
+
+    # Keep the incident compatibility snapshot aligned with its assessment:
+    # refresh every incident scored here and clear any whose assessment was
+    # evicted, so a deleted assessment never leaves a stale score behind.
+    _sync_incident_snapshots(db, scored_incidents, evicted_incident_ids)
     db.commit()
     logger.info(
         "Risk recompute v%s: %d assessed, %d created, %d updated",
@@ -624,8 +701,9 @@ def calculate_incident_risk(
     """Calculate (or refresh) one incident's assessment (Step 25).
 
     Same deterministic inputs as the recompute path; upserts the single
-    row and commits. Raises ``LookupError`` for unknown incidents. Never
-    touches the incident itself or any external system.
+    row, refreshes the incident's compatibility snapshot to match it, and
+    commits. Raises ``LookupError`` for unknown incidents. Never touches
+    any external system.
     """
     incident = db.scalar(select(Incident).where(Incident.id == incident_id))
     if incident is None:
@@ -656,6 +734,7 @@ def calculate_incident_risk(
     row, _created, _changed = _persist_assessment(
         db, ENTITY_INCIDENT, incident.id, result, actor, reason
     )
+    sync_incident_snapshot(db, incident)
     db.commit()
     db.refresh(row)
     logger.info("Incident risk calculated for %s: score %s", incident_id[:12], result["score"])
@@ -675,6 +754,7 @@ __all__ = [
     "band_for",
     "calculate_incident_risk",
     "clamp_score",
+    "current_incident_assessment",
     "cvss_points",
     "priority_for",
     "recency_points",
@@ -685,4 +765,5 @@ __all__ = [
     "score_incident",
     "score_vulnerability",
     "severity_points",
+    "sync_incident_snapshot",
 ]

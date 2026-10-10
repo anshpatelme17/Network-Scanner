@@ -34,6 +34,7 @@ const GROUPS: Array<{ title: string; links: NavEntry[] }> = [
     title: "Assess",
     links: [
       { to: "/risk", label: "Risk" },
+      { to: "/risk-prioritization", label: "Prioritization" },
       { to: "/vulnerabilities", label: "Vulnerabilities" },
     ],
   },

@@ -933,12 +933,12 @@ def list_incident_response_recommendations(
         )
     items = response_governance.recommendations(db, incident)
     window = items[offset : offset + limit]
-    _, priority = response_governance._incident_risk(db, incident)
+    score, priority = response_governance._incident_risk(db, incident)
     return {
         "incident_id": incident.id,
         "incident_key": incident.incident_key,
         "severity": incident.severity,
-        "risk_score": incident.risk_score,
+        "risk_score": score,
         "risk_priority": priority,
         "items": window,
         "total": len(items),

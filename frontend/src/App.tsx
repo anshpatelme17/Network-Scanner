@@ -12,6 +12,7 @@ import { Login } from "./pages/Login";
 import { Network } from "./pages/Network";
 import { Response } from "./pages/Response";
 import { Risk } from "./pages/Risk";
+import { RiskPrioritization } from "./pages/RiskPrioritization";
 import { Vulnerabilities } from "./pages/Vulnerabilities";
 import { Settings } from "./pages/placeholders";
 
@@ -34,6 +35,7 @@ export function App() {
             <Route path="triage" element={<AlertTriage />} />
             <Route path="correlations" element={<Correlations />} />
             <Route path="risk" element={<Risk />} />
+            <Route path="risk-prioritization" element={<RiskPrioritization />} />
             <Route path="incidents" element={<Incidents />} />
             <Route path="network" element={<Network />} />
             <Route path="vulnerabilities" element={<Vulnerabilities />} />

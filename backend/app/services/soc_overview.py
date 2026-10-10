@@ -2,9 +2,9 @@
 
 A single **read-only** roll-up of stored security state for a dashboard. It
 introduces no detection, scoring or correlation logic: every number is a SQL
-``COUNT`` over rows the platform already stores, and every priority is the
-existing :func:`app.services.risk_service.priority_for` band applied to the
-already-stored ``risk_score``.
+``COUNT`` over rows the platform already stores, and every incident priority is
+the existing :func:`app.services.risk_service.priority_for` band applied to the
+score of the incident's **linked** risk assessment, never to a bare snapshot.
 
 Design constraints honoured here:
 
@@ -70,28 +70,39 @@ def _severity_buckets(db: Session) -> dict[str, int]:
 
 
 def _priority_buckets(db: Session) -> dict[str, int]:
-    """Per-priority incident counts derived from the stored risk score.
+    """Per-priority incident counts derived from the linked risk assessment.
 
-    Priority is *not* a stored column: it is the existing Step 25 band
-    applied to ``risk_score``. Incidents with no score fall into ``UNSCORED``
-    rather than being silently dropped or given an invented priority.
+    Priority is the existing :func:`app.services.risk_service.priority_for`
+    band applied to the incident's **authoritative** assessment score (via
+    ``Incident.risk_assessment_id``) — never to a bare stored snapshot, so
+    a detached or evicted assessment can never masquerade as current risk.
+    Incidents with no valid assessment fall into ``UNSCORED`` rather than
+    being silently dropped or given an invented priority.
     """
-    scores = db.execute(
-        select(Incident.risk_score).where(Incident.risk_score.is_not(None))
+    rows = db.execute(
+        select(RiskAssessment.score)
+        .select_from(Incident)
+        .outerjoin(RiskAssessment, RiskAssessment.id == Incident.risk_assessment_id)
     ).scalars()
-    counts = {"P1": 0, "P2": 0, "P3": 0, "P4": 0}
-    for score in scores:
-        counts[priority_for(int(score))] += 1
-    unscored = _count(db, Incident, Incident.risk_score.is_(None))
-    result: dict[str, int] = dict(counts)
-    result["UNSCORED"] = unscored
-    return result
+    counts = {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "UNSCORED": 0}
+    for score in rows:
+        if score is None:
+            counts["UNSCORED"] += 1
+        else:
+            counts[priority_for(int(score))] += 1
+    return counts
 
 
 def _top_incidents(db: Session, limit: int) -> list[dict[str, object]]:
-    """Most recent open incidents, bounded, ordered deterministically."""
-    rows = db.scalars(
-        select(Incident)
+    """Most recent open incidents, bounded, ordered deterministically.
+
+    Risk columns come from the incident's linked assessment (authoritative),
+    not the raw snapshot; an incident without a valid assessment reports
+    ``null`` for both score and priority rather than an invented band.
+    """
+    rows = db.execute(
+        select(Incident, RiskAssessment.score, RiskAssessment.priority)
+        .outerjoin(RiskAssessment, RiskAssessment.id == Incident.risk_assessment_id)
         .where(Incident.status.in_(OPEN_INCIDENT_STATUSES))
         .order_by(desc(Incident.last_seen), Incident.id)
         .limit(limit)
@@ -104,9 +115,11 @@ def _top_incidents(db: Session, limit: int) -> list[dict[str, object]]:
             "status": row.status,
             "severity": row.severity,
             "confidence": int(row.confidence or 0),
-            "risk_score": row.risk_score,
-            # Derived from the stored score by the existing band function.
-            "priority": priority_for(int(row.risk_score)) if row.risk_score is not None else None,
+            "risk_score": int(score) if score is not None else None,
+            # Derived from the authoritative score by the existing band function.
+            "priority": (
+                (stored_priority or priority_for(int(score))) if score is not None else None
+            ),
             "primary_asset_id": row.primary_asset_id,
             "primary_ip": row.primary_ip,
             "hostname": row.hostname,
@@ -114,7 +127,7 @@ def _top_incidents(db: Session, limit: int) -> list[dict[str, object]]:
             "first_seen": row.first_seen.isoformat(),
             "last_seen": row.last_seen.isoformat(),
         }
-        for row in rows
+        for row, score, stored_priority in rows
     ]
 
 

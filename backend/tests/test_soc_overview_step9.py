@@ -132,6 +132,8 @@ def _seed_incident(*, key, title, severity, risk_score, status="OPEN", last_seen
     from app.database import session as session_module
     from app.models.correlations import Correlation
     from app.models.incidents import Incident
+    from app.models.risk import RiskAssessment
+    from app.services import risk_service
 
     db = session_module.get_session_factory()()
     try:
@@ -162,11 +164,33 @@ def _seed_incident(*, key, title, severity, risk_score, status="OPEN", last_seen
             severity=severity,
             confidence=70,
             correlation_id=correlation_id,
-            risk_score=risk_score,
             first_seen=moment,
             last_seen=moment,
         )
         db.add(incident)
+        db.flush()  # assign the deterministic incident id
+        if risk_score is not None:
+            # A score is only meaningful with the authoritative assessment
+            # it came from; the snapshot mirrors that row (the dashboard
+            # reads the assessment, not the bare snapshot).
+            assessment_id = risk_service.assessment_id(
+                risk_service.ENTITY_INCIDENT, incident.id
+            )
+            db.add(
+                RiskAssessment(
+                    id=assessment_id,
+                    entity_type=risk_service.ENTITY_INCIDENT,
+                    entity_id=incident.id,
+                    score=risk_score,
+                    severity=risk_service.band_for(risk_score),
+                    priority=risk_service.priority_for(risk_score),
+                    factors="{}",
+                    explanation="seeded for step 9",
+                    scoring_version=risk_service.SCORING_VERSION,
+                )
+            )
+            incident.risk_assessment_id = assessment_id
+            incident.risk_score = risk_score
         db.commit()
         return incident.id
     finally:

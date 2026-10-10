@@ -287,20 +287,22 @@ def validate_target_against_evidence(
 # ---------------------------------------------------------------------------
 
 
-def _incident_risk(db: Session, incident: Incident) -> tuple[int | None, str]:
-    """Read-only (score, priority) for reporting. Never recalculates."""
-    row = db.scalar(
-        select(RiskAssessment).where(
-            RiskAssessment.entity_type == risk_service.ENTITY_INCIDENT,
-            RiskAssessment.entity_id == incident.id,
-        )
-    )
-    score = row.score if row is not None else incident.risk_score
-    if score is None:
-        return None, risk_service.priority_for(0)
-    priority = (
-        row.priority if row is not None and row.priority else risk_service.priority_for(score)
-    )
+def _incident_risk(db: Session, incident: Incident) -> tuple[int | None, str | None]:
+    """Read-only (score, priority) from the incident's linked assessment.
+
+    The assessment is authoritative. When the incident has no valid linked
+    assessment the result is ``(None, None)``: the raw ``risk_score``
+    snapshot is never trusted on its own, so a detached or evicted
+    assessment can never be reported as current risk, and no band is
+    invented for a missing score. Never recalculates.
+    """
+    if incident.risk_assessment_id is None:
+        return None, None
+    row = db.get(RiskAssessment, incident.risk_assessment_id)
+    if row is None:
+        return None, None
+    score = int(row.score)
+    priority = row.priority or risk_service.priority_for(score)
     return score, priority
 
 

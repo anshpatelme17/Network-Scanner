@@ -662,7 +662,7 @@ export interface ResponseRecommendation {
   incident_id: string;
   incident_key: string;
   severity: string;
-  risk_priority: string;
+  risk_priority: string | null;
   available: boolean;
   provider: string;
   evidence_event_ids: string[];
@@ -676,7 +676,7 @@ export interface ResponseRecommendations {
   incident_key: string;
   severity: string;
   risk_score: number | null;
-  risk_priority: string;
+  risk_priority: string | null;
   items: ResponseRecommendation[];
   total: number;
   truncated: boolean;

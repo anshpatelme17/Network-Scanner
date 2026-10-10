@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IncidentTimeline as IncidentTimelineSection } from "../components/incidents/IncidentTimeline";
 import { ApiError, api } from "../services/api";
 import type {
@@ -75,6 +75,26 @@ function severityTone(severity: string): string {
 }
 
 /**
+ * Phase 3, Step 38: a distinct, honest sentence for a rejected status
+ * transition. Only the stable machine code/HTTP status is inspected — the
+ * server's message and any exception detail are never rendered.
+ */
+function statusChangeMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === "INVALID_TRANSITION" || err.status === 422) {
+      return "That status change is not allowed from the incident's current state.";
+    }
+    if (err.code === "PERMISSION_DENIED" || err.status === 401 || err.status === 403) {
+      return "Your account is not permitted to change this incident's status.";
+    }
+    if (err.code === "INCIDENT_NOT_FOUND" || err.status === 404) {
+      return "This incident could not be found. It may have been removed.";
+    }
+  }
+  return "The status change could not be completed because of a network or server error.";
+}
+
+/**
  * Phase 3, Step 34: the incident detail is organized as an analyst
  * investigation workspace. Every independently loaded section carries its
  * own state, so a failure or a permission denial in one section never
@@ -148,6 +168,10 @@ export function Incidents() {
   const [proposeReason, setProposeReason] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
+  const [statusPending, setStatusPending] = useState(false);
+  // Synchronous duplicate-submission guard: state alone cannot stop a second
+  // click fired before React re-renders the disabled button.
+  const statusPendingRef = useRef(false);
 
   const [evidenceState, setEvidenceState] = useState<SectionState>("loading");
   const [relationshipsState, setRelationshipsState] = useState<SectionState>("loading");
@@ -253,13 +277,44 @@ export function Incidents() {
   };
 
   const changeStatus = async (id: string, next: string) => {
+    if (statusPendingRef.current) return;
+    statusPendingRef.current = true;
+    setStatusPending(true);
     setNotice(null);
     try {
+      // On success use the server's returned record; no optimistic update.
       const updated = await api.updateIncidentStatus(id, next);
       setSelected({ ...updated, evidence_event_ids: selected?.evidence_event_ids ?? [] });
       await load(statusFilter, severityFilter, typeFilter);
-    } catch {
-      setNotice("Status change was rejected by the server.");
+    } catch (err) {
+      const message = statusChangeMessage(err);
+      // Resynchronize stale UI from the server. If the re-fetch fails too, we
+      // keep whatever data we already had and say so rather than fabricate.
+      let resyncFailed = false;
+      try {
+        setSelected(await api.getIncident(id));
+      } catch {
+        resyncFailed = true;
+      }
+      try {
+        const page = await api.getIncidents({
+          status: statusFilter || undefined,
+          severity: severityFilter || undefined,
+          incident_type: typeFilter || undefined,
+          limit: 100,
+        });
+        setItems(Array.isArray(page.items) ? page.items : []);
+        setTotal(typeof page.total === "number" ? page.total : 0);
+        setState("ready");
+      } catch {
+        resyncFailed = true;
+      }
+      setNotice(
+        resyncFailed ? `${message} The latest record could not be reloaded.` : message,
+      );
+    } finally {
+      statusPendingRef.current = false;
+      setStatusPending(false);
     }
   };
 
@@ -1021,7 +1076,7 @@ export function Incidents() {
                   </div>
                   <div className="muted">
                     incident {item.incident_key} · severity {item.severity} · risk priority{" "}
-                    {item.risk_priority} · provider {item.provider} ·{" "}
+                    {item.risk_priority ?? "—"} · provider {item.provider} ·{" "}
                     {item.evidence_event_ids.length} evidence event(s) · approval required:{" "}
                     {String(item.requires_approval)} · automatic: {String(item.automatic)}
                   </div>
@@ -1047,6 +1102,7 @@ export function Incidents() {
                   key={next}
                   className="button secondary"
                   type="button"
+                  disabled={statusPending}
                   onClick={() => void changeStatus(selected.id, next)}
                 >
                   Mark {next.charAt(0) + next.slice(1).toLowerCase()}

@@ -167,7 +167,7 @@ class ResponseRecommendation(BaseModel):
     incident_id: str
     incident_key: str
     severity: str
-    risk_priority: str
+    risk_priority: str | None = None
     available: bool
     provider: str
     evidence_event_ids: list[str] = Field(default_factory=list)
@@ -185,7 +185,7 @@ class ResponseRecommendationsResponse(BaseModel):
     incident_key: str
     severity: str
     risk_score: int | None = None
-    risk_priority: str
+    risk_priority: str | None = None
     items: list[ResponseRecommendation] = Field(default_factory=list)
     total: int = 0
     truncated: bool = False
