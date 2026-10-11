@@ -35,6 +35,7 @@ import type {
   InventorySummary,
   NmapStatus,
   ReadinessStatus,
+  ResponseCenterSummary,
   ResponseDetail,
   ResponsePage,
   ResponsePolicy,
@@ -427,6 +428,17 @@ export const api = {
     request<ResponseRecommendations>(
       `/api/v1/incidents/${encodeURIComponent(id)}/response-recommendations?limit=50`,
     ),
+
+  // -- Step 40: response center (read-only) ----------------------------------
+  // A single aggregated GET. There is deliberately no call here that
+  // approves, executes, rolls back, or requests anything: the center only
+  // reads stored state and links to /response for every interaction.
+  getResponseCenterSummary: (params?: { limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    query.set("limit", String(params?.limit ?? 100));
+    query.set("offset", String(params?.offset ?? 0));
+    return request<ResponseCenterSummary>(`/api/v1/responses/summary?${query.toString()}`);
+  },
   getVulnerabilities: (params?: {
     severity?: string;
     status?: string;

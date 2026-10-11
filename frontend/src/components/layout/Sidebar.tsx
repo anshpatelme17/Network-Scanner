@@ -43,6 +43,7 @@ const GROUPS: Array<{ title: string; links: NavEntry[] }> = [
     links: [
       { to: "/network", label: "Network" },
       { to: "/response", label: "Response" },
+      { to: "/response-center", label: "Response Center" },
     ],
   },
   {

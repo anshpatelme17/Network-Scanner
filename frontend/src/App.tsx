@@ -11,6 +11,7 @@ import { Incidents } from "./pages/Incidents";
 import { Login } from "./pages/Login";
 import { Network } from "./pages/Network";
 import { Response } from "./pages/Response";
+import { ResponseCenter } from "./pages/ResponseCenter";
 import { Risk } from "./pages/Risk";
 import { RiskPrioritization } from "./pages/RiskPrioritization";
 import { Vulnerabilities } from "./pages/Vulnerabilities";
@@ -40,6 +41,7 @@ export function App() {
             <Route path="network" element={<Network />} />
             <Route path="vulnerabilities" element={<Vulnerabilities />} />
             <Route path="response" element={<Response />} />
+            <Route path="response-center" element={<ResponseCenter />} />
             <Route path="settings" element={<Settings />} />
             <Route path="login" element={<Login />} />
             <Route path="*" element={<Dashboard />} />

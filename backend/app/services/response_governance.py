@@ -38,8 +38,9 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -50,6 +51,7 @@ from app.models.responses import ResponseAction, ResponseAudit, ResponseExecutio
 from app.models.risk import RiskAssessment
 from app.services import incident_service, response_service, risk_service
 from app.services.response_providers import (
+    CONTROLLED_ACTION_TYPES,
     MOCK_PROVIDER,
     ROLLBACK_PAIRS,
     ProviderOutcome,
@@ -95,6 +97,41 @@ MAX_RECOMMENDATIONS = 20
 # read-path call that triggers it stays bounded even if a deployment has
 # accumulated a large backlog of overdue requests.
 MAX_EXPIRY_SCAN = 200
+
+# Step 40: the "expiring soon" warning window. A WARNING threshold only:
+# it never extends, shortens, or otherwise alters an action's actual TTL
+# or expiry enforcement, both of which remain governed by
+# ``is_expired``/``expire_due`` and the configured TTL ceiling.
+EXPIRY_WARNING_HOURS = 72
+
+# Step 40: payload version for the read-only Response Center summary.
+RESPONSE_CENTER_VERSION = "1"
+
+# Step 40: the lifecycle states a controlled-response row can occupy.
+# ``PROPOSED`` and ``READY_FOR_EXECUTION`` are deliberately absent: they
+# belong to the Step 12-19 proposal flow, which a controlled request
+# never enters (one is created in PENDING_APPROVAL and leaves it only
+# through approve / reject / cancel / expire / dry-run). Every key is
+# always reported, including zeros, so a client never has to guess
+# whether a missing key means "none" or "not reported".
+RESPONSE_CENTER_STATUSES = (
+    response_service.STATUS_PENDING_APPROVAL,
+    response_service.STATUS_APPROVED,
+    response_service.STATUS_REJECTED,
+    response_service.STATUS_CANCELLED,
+    response_service.STATUS_EXPIRED,
+    response_service.STATUS_DRY_RUN_COMPLETED,
+    response_service.STATUS_RUNNING,
+    response_service.STATUS_COMPLETED,
+    response_service.STATUS_FAILED,
+    response_service.STATUS_ROLLED_BACK,
+)
+
+# Step 40: server-side cap on each returned list. Mirrors the module's
+# existing MAX_LIMIT conventions, so a caller can widen the window but
+# never remove the bound.
+RESPONSE_CENTER_MAX_LIMIT = 200
+RESPONSE_CENTER_DEFAULT_LIMIT = 100
 
 
 class TargetRejectedError(ValueError):
@@ -726,14 +763,20 @@ def _expire(db: Session, action: ResponseAction, actor: str) -> None:
     _audit(db, action, response_service.EVENT_RESPONSE_EXPIRED, actor, previous, action.status)
 
 
-def expire_due(db: Session, incident_id: str | None = None) -> list[str]:
+def expire_due(db: Session, incident_id: str | None = None, now: datetime | None = None) -> list[str]:
     """Expire every overdue pending/approved request. Audited, bounded.
 
-    Called on read paths (list/detail/execute) rather than by a
+    Called on read paths (list/detail/summary) rather than by a
     background worker, because this platform has no scheduler. The
     whole batch is one SELECT and at most one COMMIT, and the filter is
     ordered by the (now indexed) ``expires_at`` column so the hot path
     touches only genuinely overdue rows.
+
+    ``now`` lets a caller that already captured one timestamp for a
+    request retire overdue rows against that same instant, so a single
+    read cannot make two subtly different decisions about the same
+    deadline. It defaults to the current time, which is what every
+    existing call site already relied on.
     """
     query = (
         select(ResponseAction)
@@ -745,7 +788,7 @@ def expire_due(db: Session, incident_id: str | None = None) -> list[str]:
                 )
             ),
             ResponseAction.expires_at.is_not(None),
-            ResponseAction.expires_at <= _utcnow_naive(),
+            ResponseAction.expires_at <= (now or _utcnow_naive()),
         )
         .order_by(ResponseAction.expires_at)
     )
@@ -1105,20 +1148,177 @@ def recommendations(db: Session, incident: Incident) -> list[dict[str, object]]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Step 40: read-only Response Center summary
+# ---------------------------------------------------------------------------
+
+
+def _controlled_only() -> ColumnElement[bool]:
+    """SQL predicate for "this row is a Step 30 controlled response".
+
+    ``response_providers.is_controlled_action`` is the authoritative
+    predicate and is membership in ``CONTROLLED_ACTION_TYPES``; this is the
+    same test expressed for SQL so the summary and the policy layer can
+    never disagree about which rows are governed.
+    """
+    return ResponseAction.action_type.in_(CONTROLLED_ACTION_TYPES)
+
+
+def _summary_row(row: ResponseAction) -> dict[str, object]:
+    """One action as plain data. Mirrors the Step 30 wire shape exactly."""
+    return {
+        "id": row.id,
+        "incident_id": row.incident_id,
+        "action_type": row.action_type,
+        "target_type": row.target_type,
+        "target_reference": row.target_reference,
+        "reason": row.reason,
+        "requested_by": row.requested_by,
+        "status": row.status,
+        "dry_run": row.dry_run,
+        "policy_version": row.policy_version,
+        "provider": row.provider,
+        "policy_decision": row.policy_decision,
+        "approval_required": row.approval_required,
+        "rollback_supported": row.rollback_supported,
+        "rollback_state": row.rollback_state,
+        "rollback_reference": row.rollback_reference,
+        "target_evidence": _stored_evidence(row),
+        "execution_status": row.execution_status,
+        "created_at": row.created_at,
+        "approved_at": row.approved_at,
+        "expires_at": row.expires_at,
+        "approved_by": row.approved_by,
+        "started_at": row.started_at,
+        "completed_at": row.completed_at,
+        "failure_reason": row.failure_reason,
+        "result_summary": row.result_summary,
+    }
+
+
+def build_response_center_summary(
+    db: Session,
+    *,
+    limit: int = RESPONSE_CENTER_DEFAULT_LIMIT,
+    offset: int = 0,
+) -> dict[str, object]:
+    """Aggregate stored controlled-response state for the Response Center.
+
+    Read-only apart from the shared, already-established read-path expiry
+    sweep, and deterministic for a given stored state:
+
+    * Only Step 30 controlled actions are included. Legacy Step 12/13/18/19
+      proposal rows are excluded by ``_controlled_only()`` so a dry-run
+      proposal can never appear next to a governed request.
+    * ``counts`` and ``total`` are complete aggregates - never bounded -
+      so they are safe to render as exact numbers.
+    * The two lists are bounded by ``limit``/``offset`` over a
+      deterministic ``(expires_at, id)`` ordering, and ``truncated`` says
+      so honestly when either list was cut short.
+    * ``expiring_soon`` is a pure function of ``expires_at``: strictly in
+      the future and within ``EXPIRY_WARNING_HOURS``. It is a warning
+      only, never an enforcement decision, and it excludes rows that have
+      already expired and rows with no expiry at all.
+    * Query count is fixed (expiry sweep, one grouped count, one pending
+      list, one expiry count, one expiry list) regardless of table size;
+      there is no per-row query.
+
+    ``expire_due`` is called once, exactly as the existing list and detail
+    endpoints already do, so overdue requests are retired and audited by
+    the same code path rather than a second, divergent one.
+    """
+    capped_limit = max(1, min(int(limit), RESPONSE_CENTER_MAX_LIMIT))
+    capped_offset = max(0, int(offset))
+
+    # One timestamp captured for the whole request, so every comparison
+    # below is against the same instant rather than a drifting clock.
+    now = _utcnow_naive()
+    expire_due(db, now=now)
+
+    controlled = _controlled_only()
+    observed = dict(
+        db.execute(
+            select(ResponseAction.status, func.count(ResponseAction.id)).where(controlled)
+            .group_by(ResponseAction.status)
+        ).all()
+    )
+    counts: dict[str, int] = {status: 0 for status in RESPONSE_CENTER_STATUSES}
+    for status, count in observed.items():
+        # A status outside the canonical vocabulary is reported rather
+        # than silently dropped: hiding a row would be the dishonest
+        # outcome, and none is expected because the set is closed.
+        counts[str(status)] = counts.get(str(status), 0) + int(count)
+    total = sum(counts.values())
+
+    pending_where = (controlled, ResponseAction.status == response_service.STATUS_PENDING_APPROVAL)
+    pending_total = counts.get(response_service.STATUS_PENDING_APPROVAL, 0)
+    pending_rows = db.scalars(
+        select(ResponseAction)
+        .where(*pending_where)
+        .order_by(ResponseAction.expires_at, ResponseAction.id)
+        .limit(capped_limit)
+        .offset(capped_offset)
+    ).all()
+
+    horizon = now + timedelta(hours=EXPIRY_WARNING_HOURS)
+    expiring_where = (
+        controlled,
+        ResponseAction.expires_at.is_not(None),
+        ResponseAction.expires_at > now,
+        ResponseAction.expires_at <= horizon,
+    )
+    expiring_total = int(
+        db.scalar(select(func.count()).select_from(ResponseAction).where(*expiring_where)) or 0
+    )
+    expiring_rows = db.scalars(
+        select(ResponseAction)
+        .where(*expiring_where)
+        .order_by(ResponseAction.expires_at, ResponseAction.id)
+        .limit(capped_limit)
+        .offset(capped_offset)
+    ).all()
+
+    # truncation is reported per list against that list's own exact total,
+    # so "incomplete" always means "this list omitted rows" - never the
+    # aggregate counts, which are complete by construction.
+    truncated = (capped_offset + len(pending_rows)) < pending_total or (
+        capped_offset + len(expiring_rows)
+    ) < expiring_total
+
+    return {
+        "version": RESPONSE_CENTER_VERSION,
+        "generated_at": now.isoformat(),
+        "counts": counts,
+        "pending_approval": [_summary_row(row) for row in pending_rows],
+        "expiring_soon": [_summary_row(row) for row in expiring_rows],
+        "total": total,
+        "limit": capped_limit,
+        "offset": capped_offset,
+        "truncated": truncated,
+        "expiry_warning_hours": EXPIRY_WARNING_HOURS,
+    }
+
+
 __all__ = [
     "DECISION_ALLOWED_WITH_APPROVAL",
     "DECISION_APPROVAL_REQUIRED",
     "DECISION_DRY_RUN_ONLY",
     "DECISION_NOT_ALLOWED",
+    "EXPIRY_WARNING_HOURS",
     "GOVERNANCE_VERSION",
     "MAX_EVIDENCE_EVENTS_SCANNED",
     "MAX_EVIDENCE_REFERENCES_STORED",
     "MAX_RECOMMENDATIONS",
     "POLICY_DECISIONS",
     "POLICY_VERSION",
+    "RESPONSE_CENTER_DEFAULT_LIMIT",
+    "RESPONSE_CENTER_MAX_LIMIT",
+    "RESPONSE_CENTER_STATUSES",
+    "RESPONSE_CENTER_VERSION",
     "PolicyDeniedError",
     "TargetRejectedError",
     "approve",
+    "build_response_center_summary",
     "cancel",
     "evaluate_policy",
     "execute",

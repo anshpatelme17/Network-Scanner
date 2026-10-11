@@ -37,6 +37,7 @@ from app.schemas.response_governance import (
     ControlledDryRunResponse,
     ControlledResponseRequest,
     GovernanceActorRequest,
+    ResponseCenterSummaryResponse,
     ResponsePolicyResponse,
     RollbackResponse,
 )
@@ -171,6 +172,45 @@ def _governance_error(exc: Exception) -> Response:
     if isinstance(exc, response_service.ResponseNotFoundError):
         return error_response("RESPONSE_NOT_FOUND", str(exc), status.HTTP_404_NOT_FOUND)
     raise exc
+
+
+# ---------------------------------------------------------------------------
+# Step 40: read-only Response Center summary
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/summary",
+    response_model=ResponseCenterSummaryResponse,
+    summary="Response center summary (read-only)",
+)
+def get_response_center_summary(
+    limit: int = Query(
+        default=response_governance.RESPONSE_CENTER_DEFAULT_LIMIT,
+        ge=1,
+        le=response_governance.RESPONSE_CENTER_MAX_LIMIT,
+        description="Maximum rows per returned list. Capped server-side.",
+    ),
+    offset: int = Query(default=0, ge=0, description="Page offset applied to each returned list."),
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("READ_RESPONSES")),
+):
+    """Aggregate stored controlled-response state for an operator workspace.
+
+    Read-only apart from the same read-path expiry sweep the existing
+    list/detail endpoints already perform. It introduces no action, no
+    provider, no state transition, and no execution surface: there is
+    deliberately no POST here, and nothing below can approve, execute, or
+    roll anything back. Only Step 30 controlled actions are included, so a
+    legacy Step 12/13/18/19 dry-run proposal never appears in this
+    roll-up.
+
+    ``limit``/``offset`` are validated and then clamped again inside the
+    service, so a caller can widen the window but never remove the bound.
+    """
+    return response_governance.build_response_center_summary(
+        db, limit=limit, offset=offset
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -580,6 +580,24 @@ export interface ExecutionRecord {
   simulated_at: string;
 }
 
+/**
+ * Step 40: read-only roll-up of stored controlled-response state. The two
+ * lists are bounded server-side; `counts` and `total` are complete
+ * aggregates, so they may be rendered as exact numbers.
+ */
+export interface ResponseCenterSummary {
+  version: string;
+  generated_at: string;
+  counts: Record<string, number>;
+  pending_approval: ResponseProposal[];
+  expiring_soon: ResponseProposal[];
+  total: number;
+  limit: number;
+  offset: number;
+  truncated: boolean;
+  expiry_warning_hours: number;
+}
+
 export interface ResponseDetail extends ResponseProposal {
   audit: ResponseAuditEntry[];
   execution: ExecutionRecord | null;

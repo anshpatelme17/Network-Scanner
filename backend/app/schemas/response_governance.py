@@ -151,6 +151,33 @@ class RollbackResponse(BaseModel):
     created_at: datetime
 
 
+class ResponseCenterSummaryResponse(BaseModel):
+    """Read-only roll-up of stored controlled-response state (Step 40).
+
+    Intentionally additive: no existing response contract changes, and no
+    field here can be steered by a caller. The two lists are bounded by
+    ``limit``/``offset`` (server-clamped); ``total`` and ``counts`` are
+    complete aggregates, so they are never bounded.
+
+    ``expiry_warning_hours`` carries the server's warning threshold so the
+    UI can describe the window from the same source that applies it,
+    instead of duplicating a constant that could drift.
+    """
+
+    model_config = {"from_attributes": True}
+
+    version: str = "1"
+    generated_at: datetime
+    counts: dict[str, int] = Field(default_factory=dict)
+    pending_approval: list[ControlledActionResponse] = Field(default_factory=list)
+    expiring_soon: list[ControlledActionResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 100
+    offset: int = 0
+    truncated: bool = False
+    expiry_warning_hours: int = 72
+
+
 class ResponseRecommendation(BaseModel):
     """One deterministic, evidence-backed action suggestion.
 
@@ -201,6 +228,7 @@ __all__ = [
     "ControlledDryRunResponse",
     "ControlledResponseRequest",
     "GovernanceActorRequest",
+    "ResponseCenterSummaryResponse",
     "ResponsePolicyResponse",
     "ResponseRecommendation",
     "ResponseRecommendationsResponse",
