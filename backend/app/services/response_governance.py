@@ -146,6 +146,27 @@ def _utcnow_naive() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+# Step 41: hard ceiling on an operator-supplied rejection reason. The
+# request schema enforces the same bound so an over-long reason is
+# refused with a 422 rather than silently truncated; the service clamp
+# below is the backstop for a direct service caller.
+MAX_REJECTION_REASON = 2000
+
+
+def _sanitize_rejection_reason(reason: str | None) -> str | None:
+    """Trim and bound an optional operator-supplied rejection reason.
+
+    A whitespace-only or absent reason becomes ``None`` so the audit row
+    records no rationale rather than an empty-looking one. The value is
+    only ever operator text: no exception detail, server message, or
+    caller-controlled server state is interpolated here.
+    """
+    cleaned = (reason or "").strip()
+    if not cleaned:
+        return None
+    return cleaned[:MAX_REJECTION_REASON]
+
+
 def _audit(
     db: Session,
     action: ResponseAction,
@@ -153,6 +174,7 @@ def _audit(
     actor: str,
     previous_status: str | None,
     new_status: str | None,
+    detail: str | None = None,
 ) -> None:
     from app.core.request_context import current_request_id_or_new
 
@@ -164,6 +186,10 @@ def _audit(
             previous_status=previous_status,
             new_status=new_status,
             actor=(actor or "operator")[:128],
+            # Optional, already-sanitised operator rationale. Only the
+            # rejection path supplies one; every other lifecycle event
+            # and every legacy row keeps NULL.
+            detail=detail,
             policy_version=POLICY_VERSION,
             request_id=current_request_id_or_new() or None,
         )
@@ -720,7 +746,20 @@ def approve(db: Session, action_id: str, actor: str) -> ResponseAction:
     return action
 
 
-def reject(db: Session, action_id: str, actor: str) -> ResponseAction:
+def reject(
+    db: Session, action_id: str, actor: str, reason: str | None = None
+) -> ResponseAction:
+    """Refuse a pending request, recording why if the approver said.
+
+    Only a request still in PENDING_APPROVAL may be rejected. The status
+    change and the audit row are appended to the same transaction and
+    committed together, so a request can never be REJECTED without its
+    audit trail — if the audit write fails, the decision fails closed and
+    no state is left behind.
+
+    ``reason`` is optional operator text. It is sanitised before storage
+    and is never sourced from a server exception or internal message.
+    """
     action = _locked_action(db, action_id)
     if action.status != response_service.STATUS_PENDING_APPROVAL:
         raise response_service.InvalidResponseTransitionError(
@@ -728,7 +767,15 @@ def reject(db: Session, action_id: str, actor: str) -> ResponseAction:
         )
     previous = action.status
     action.status = response_service.STATUS_REJECTED
-    _audit(db, action, response_service.EVENT_RESPONSE_REJECTED, actor, previous, action.status)
+    _audit(
+        db,
+        action,
+        response_service.EVENT_RESPONSE_REJECTED,
+        actor,
+        previous,
+        action.status,
+        _sanitize_rejection_reason(reason),
+    )
     db.commit()
     db.refresh(action)
     return action
@@ -1309,6 +1356,7 @@ __all__ = [
     "MAX_EVIDENCE_EVENTS_SCANNED",
     "MAX_EVIDENCE_REFERENCES_STORED",
     "MAX_RECOMMENDATIONS",
+    "MAX_REJECTION_REASON",
     "POLICY_DECISIONS",
     "POLICY_VERSION",
     "RESPONSE_CENTER_DEFAULT_LIMIT",

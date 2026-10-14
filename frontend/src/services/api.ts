@@ -377,11 +377,19 @@ export const api = {
     return request<ResponsePage>(`/api/v1/responses?${query.toString()}`);
   },
   getResponse: (id: string) => request<ResponseDetail>(`/api/v1/responses/${encodeURIComponent(id)}`),
-  decideResponse: (id: string, decision: "approve" | "reject" | "cancel", actor = "operator") =>
+  decideResponse: (
+    id: string,
+    decision: "approve" | "reject" | "cancel",
+    actor = "operator",
+    reason?: string,
+  ) =>
     request<ResponseProposal>(`/api/v1/responses/${encodeURIComponent(id)}/${decision}`, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify({ actor }),
+      // Step 41: the rationale is optional and is only meaningful for a
+      // rejection. Omitted entirely when absent so older server builds and
+      // callers that never send a reason are unaffected.
+      body: JSON.stringify(reason ? { actor, reason } : { actor }),
     }),
   dryRunResponse: (id: string) =>
     request<DryRunResult>(`/api/v1/responses/${encodeURIComponent(id)}/dry-run`, {

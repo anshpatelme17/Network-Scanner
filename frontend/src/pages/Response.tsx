@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CONTROLLED_ACTION_TYPES } from "../types";
-import { api } from "../services/api";
+import { api, safeErrorText } from "../services/api";
 import { useSession } from "../context/SessionContext";
 import type {
   AdapterPreview,
@@ -109,6 +109,12 @@ export function Response() {
   const [policy, setPolicy] = useState<ResponsePolicy | null>(null);
   const [providerDryRun, setProviderDryRun] = useState<ProviderDryRun | null>(null);
   const [rollback, setRollback] = useState<RollbackRecord | null>(null);
+  // Step 41: synchronous duplicate-submission guard for approve/reject/
+  // cancel. State alone cannot stop a second click fired before React
+  // re-renders the disabled button, so a ref holds the in-flight flag.
+  const [decisionPending, setDecisionPending] = useState(false);
+  const decisionPendingRef = useRef(false);
+  const [rejectReason, setRejectReason] = useState("");
   // Step 31: advisory permission reflection. `can()` only decides whether
   // a governed control is *offered*; the server still authorizes it, and
   // an unknown identity is treated as not permitted.
@@ -182,13 +188,31 @@ export function Response() {
   };
 
   const decide = async (id: string, decision: "approve" | "reject" | "cancel") => {
+    // Fail closed on a repeat click: the server re-checks everything, but
+    // the operator should not be able to queue the same decision twice.
+    if (decisionPendingRef.current) return;
+    decisionPendingRef.current = true;
+    setDecisionPending(true);
     setNotice(null);
     try {
-      await api.decideResponse(id, decision);
+      // A rejection rationale is optional and only sent when the operator
+      // actually typed one. Approval and cancellation send none.
+      await api.decideResponse(
+        id,
+        decision,
+        "operator",
+        decision === "reject" && rejectReason.trim() ? rejectReason.trim() : undefined,
+      );
+      setRejectReason("");
       setSelected(await api.getResponse(id));
       await load(statusFilter);
-    } catch {
-      setNotice("Decision was rejected by the server.");
+    } catch (err) {
+      // Only the server's stable machine code is inspected; no server
+      // message or exception text is ever rendered.
+      setNotice(safeErrorText(err, "Decision was rejected by the server."));
+    } finally {
+      decisionPendingRef.current = false;
+      setDecisionPending(false);
     }
   };
 
@@ -445,11 +469,13 @@ export function Response() {
                 type="button"
                 // Advisory only: a governed decision is disabled when the
                 // signed-in account is known to lack the permission. The
-                // server re-checks it either way.
+                // server re-checks it either way. Step 41: also disabled
+                // while any decision on this action is in flight.
                 disabled={
-                  isControlled(selected) &&
-                  ((decision === "approve" && !canApprove) ||
-                    (decision === "cancel" && !canCancel))
+                  decisionPending ||
+                  (isControlled(selected) &&
+                    ((decision === "approve" && !canApprove) ||
+                      (decision === "cancel" && !canCancel)))
                 }
                 onClick={() => void decide(selected.id, decision)}
               >
@@ -461,10 +487,25 @@ export function Response() {
                 <button
                   className="button secondary"
                   type="button"
+                  disabled={decisionPending}
                   onClick={() => void runProviderPreview(selected.id)}
                 >
                   Preview Controlled Action
                 </button>
+                {/*
+                  Step 41: an optional, bounded rationale sent only with a
+                  rejection. Empty or whitespace-only input is omitted, so
+                  the server records no reason — never an empty-looking one.
+                */}
+                <input
+                  aria-label="Rejection reason"
+                  placeholder="Optional reason for rejecting"
+                  value={rejectReason}
+                  maxLength={2000}
+                  disabled={decisionPending || selected.status !== "PENDING_APPROVAL"}
+                  onChange={(event) => setRejectReason(event.target.value)}
+                  style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)" }}
+                />
                 {selected.status === "APPROVED" && (
                   <button
                     className="button"

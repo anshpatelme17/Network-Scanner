@@ -1217,6 +1217,18 @@ Each future engine gets:
   and cancelling are analyst-level, approving/executing/rolling back are
   operator-level. `RESPONSE_ALLOW_SELF_APPROVAL` exists for
   single-operator deployments and is off by default.
+- **Authorization is single-tenant and role-level** (Step 41, unchanged
+  since Step 20) — every principal with `APPROVE_RESPONSE` (OPERATOR,
+  ADMIN) may decide any stored response request, irrespective of who
+  requested it or which incident it belongs to. `users` carries only
+  `roles`; no `User`, `AuthContext`, JWT claim, `Incident`,
+  `ResponseAction` or `Asset` record holds an organization/tenant
+  identifier, so there is no tenant boundary to enforce and the platform
+  does not claim one. Approver ≠ requester is enforced by the
+  self-approval rule, not by tenancy. Multi-tenancy would require an
+  organization identity on users, incidents and response actions, a token
+  claim, and an authorization decision on every governed route — it is a
+  separate architectural step, not a Step 41 configuration change.
 - **Bounded, expiring, reversible** (Step 30) — every controlled action
   carries an `expires_at` clamped to a server ceiling, and a completed
   action can only leave `COMPLETED` through an explicit, separately

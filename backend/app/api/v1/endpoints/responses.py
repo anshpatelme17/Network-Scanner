@@ -414,7 +414,7 @@ def get_response(
     return detail
 
 
-def _decide(db: Session, action_id: str, actor: str, operation: str):
+def _decide(db: Session, action_id: str, actor: str, operation: str, reason: str | None = None):
     row = _get_or_404(db, action_id)
     if row is None:
         return error_response(
@@ -424,12 +424,14 @@ def _decide(db: Session, action_id: str, actor: str, operation: str):
         )
     if is_controlled_action(row.action_type):
         # Step 30 governance path: separation of duties, expiry guard,
-        # and the controlled transition map all live in the service.
+        # and the controlled transition map all live in the service. The
+        # optional reason is honoured for rejections only; approval and
+        # cancellation carry no rationale column of their own.
         try:
             if operation == "approve":
                 updated = response_governance.approve(db, row.id, actor)
             elif operation == "reject":
-                updated = response_governance.reject(db, row.id, actor)
+                updated = response_governance.reject(db, row.id, actor, reason)
             else:
                 updated = response_governance.cancel(db, row.id, actor)
         except Exception as exc:  # noqa: BLE001 - mapped to the safe envelope below
@@ -468,8 +470,9 @@ def reject_response(
     action_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("APPROVE_RESPONSE")),
+    _limit: None = Depends(rate_limit("response_reject", "rate_limit_response_governance")),
 ):
-    return _decide(db, action_id, actor_for(auth, payload.actor), "reject")
+    return _decide(db, action_id, actor_for(auth, payload.actor), "reject", payload.reason)
 
 
 @router.post(

@@ -38,6 +38,14 @@ class IncidentResponseProposalRequest(BaseModel):
 
 class ResponseDecisionRequest(BaseModel):
     actor: str = Field(default="operator", min_length=1, max_length=128)
+    # Step 41: optional operator rationale for the decision. Bounded so an
+    # over-long reason is refused rather than silently truncated, and
+    # absent by default so every existing client keeps working. The
+    # governance layer records it only on the rejection audit event and
+    # never lets it overwrite the requester's own reason.
+    reason: str | None = Field(
+        default=None, max_length=2000, description="Optional rationale for this decision."
+    )
 
     model_config = {"extra": "forbid"}
 

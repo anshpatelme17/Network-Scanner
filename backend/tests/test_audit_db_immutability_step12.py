@@ -372,13 +372,19 @@ def test_the_pre_step12_schema_is_unchanged_by_this_migration(tmp_path, monkeypa
     monkeypatch.setenv("DATABASE_URL", url)
     config = _alembic_config(url)
 
+    # The subject of this test is the Step 12 audit-immutability migration,
+    # so the comparison runs to the last Step 12 revision rather than to
+    # `head`. Upgrading to `head` would fold in every later feature
+    # migration and turn this into a blanket "nothing may ever add a column"
+    # assertion, which Step 41 legitimately violates by adding the
+    # optional `response_audit.detail` column.
     command.upgrade(config, "step31_hardening")
     before = inspect(create_engine(url))
     before_shape = {
         t: sorted(c["name"] for c in before.get_columns(t)) for t in before.get_table_names()
     }
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "phase2_step12_guard_sqlstate_fix")
     after = inspect(create_engine(url))
     after_shape = {
         t: sorted(c["name"] for c in after.get_columns(t)) for t in after.get_table_names()

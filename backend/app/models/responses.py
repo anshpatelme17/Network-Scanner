@@ -150,6 +150,14 @@ class ResponseAudit(Base):
     # caller-supplied: it is the sanitised value from
     # app.core.request_context.
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Step 41 (additive): optional operator-supplied reason for a rejection
+    # decision. NULL for every other lifecycle event and for rows written
+    # before this column existed. It never annotates the requester's
+    # ``ResponseAction.reason``: that column keeps its own meaning, and the
+    # approver's rationale lives here, on the append-only audit row it
+    # belongs to. Sanitised (trimmed, bounded) by the governance service
+    # before it is stored.
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ResponseExecution(Base):

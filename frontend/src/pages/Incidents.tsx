@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IncidentTimeline as IncidentTimelineSection } from "../components/incidents/IncidentTimeline";
-import { ApiError, api } from "../services/api";
+import { ApiError, api, safeErrorText } from "../services/api";
 import type {
   IncidentAuditTrail,
   IncidentDetail,
@@ -172,6 +172,9 @@ export function Incidents() {
   // Synchronous duplicate-submission guard: state alone cannot stop a second
   // click fired before React re-renders the disabled button.
   const statusPendingRef = useRef(false);
+  // Step 41: the same guard for incident-scoped response decisions.
+  const [responseDecisionPending, setResponseDecisionPending] = useState(false);
+  const responseDecisionPendingRef = useRef(false);
 
   const [evidenceState, setEvidenceState] = useState<SectionState>("loading");
   const [relationshipsState, setRelationshipsState] = useState<SectionState>("loading");
@@ -427,12 +430,25 @@ export function Incidents() {
 
   const decideResponse = async (actionId: string, decision: "approve" | "reject" | "cancel") => {
     if (!selected) return;
+    // Step 41: synchronous in-flight guard, mirroring the Step 38
+    // status-change pattern. A second click before React re-renders must
+    // not queue the same decision twice.
+    if (responseDecisionPendingRef.current) return;
+    responseDecisionPendingRef.current = true;
+    setResponseDecisionPending(true);
     setNotice(null);
     try {
       await api.decideResponse(actionId, decision);
       await refreshResponses(selected.id);
-    } catch {
-      setNotice("Response decision was rejected by the server.");
+    } catch (err) {
+      // Only the server's stable machine code is inspected; arbitrary
+      // server text is never rendered.
+      setNotice(
+        safeErrorText(err, "Response decision was rejected by the server."),
+      );
+    } finally {
+      responseDecisionPendingRef.current = false;
+      setResponseDecisionPending(false);
     }
   };
 
@@ -1003,6 +1019,7 @@ export function Incidents() {
                         <button
                           className="button secondary"
                           type="button"
+                          disabled={responseDecisionPending}
                           onClick={() => void decideResponse(item.id, "approve")}
                         >
                           Approve
@@ -1010,6 +1027,7 @@ export function Incidents() {
                         <button
                           className="button secondary"
                           type="button"
+                          disabled={responseDecisionPending}
                           onClick={() => void decideResponse(item.id, "reject")}
                         >
                           Reject
@@ -1029,6 +1047,7 @@ export function Incidents() {
                       <button
                         className="button secondary"
                         type="button"
+                        disabled={responseDecisionPending}
                         onClick={() => void decideResponse(item.id, "cancel")}
                       >
                         Cancel
