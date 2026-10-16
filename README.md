@@ -2322,3 +2322,118 @@ The harness now judges refusal on `sqlstate == '23001'` rather than on message
 wording, which is the stricter check: any other error — a missing table, a
 broken connection, a foreign-key violation — can no longer pass as
 "append-only enforced".
+
+### 24.7 Running the PostgreSQL-gated concurrency tests (Step 42)
+
+Step 41's response-approval hardening covers two properties, and they are
+deliberately kept apart.
+
+* The **state-machine** guard — a second decision made after the first has
+  committed is refused — is asserted on the default SQLite fixture and passes
+  everywhere.
+* The **row-lock** guard — two decisions that genuinely *overlap* cannot both
+  be accepted — needs a database that honours `SELECT ... FOR UPDATE`. SQLite
+  silently drops the clause, so on that fixture the property is **measured and
+  skipped, never claimed**. A test asserts the compiled SQL really contains no
+  `FOR UPDATE`, so the limitation cannot quietly become false confidence.
+
+To execute the row-lock tests for real, point `VERIFY_RUNTIME_DATABASE_URL` at a
+reachable PostgreSQL and run the Step 41 suite:
+
+```bash
+# from backend/
+export VERIFY_RUNTIME_DATABASE_URL="postgresql://secuser:<password>@127.0.0.1:5432/security_platform"
+python -m pytest tests/test_response_approval_step41.py -v
+```
+
+Expected result: the two `test_postgres_overlapping_*` tests run instead of
+skipping. With no `VERIFY_RUNTIME_DATABASE_URL` — or no reachable server — both
+skip with an explicit reason, exactly like the harness in A24.3. The tests never
+pass on the strength of a database that is not there.
+
+Isolation is structural, not incidental. Each run creates a schema named from
+`risk_race_test_<pid>_<random>`, creates the application tables inside it, and
+drops that schema on teardown. Nothing outside that name — no table, row or
+schema in `public` or anywhere else — is written, altered or dropped, and the
+application's own engine is never touched. The driver is normalized to
+`postgresql+psycopg` so the documented plain `postgresql://` URL works with the
+installed driver.
+
+The race is driven by events rather than sleeps. The first decision is suspended
+after it has read the row and is holding its lock; the competing decision then
+blocks on that lock, and the suite waits for the *observable* fact of a blocked
+`pg_locks.transactionid` entry before releasing the first. The verdict is then
+checked against the stored row and the audit records, not only the return value.
+
+The same suite on SQLite (no `VERIFY_RUNTIME_DATABASE_URL`) reports:
+
+```text
+21 passed, 4 skipped
+```
+
+where the skips are the two `FOR UPDATE` documentation tests and the two
+PostgreSQL-gated tests.
+
+## 25. Read-only response audit history (Step 42A)
+
+Step 42A exposes one action's audit history as its own bounded, read-only
+surface and shows it in the response workspace.
+
+The endpoint is `GET /api/v2/responses/{action_id}/audit`. It requires
+`READ_RESPONSES` (the permission every existing role already holds), and it
+reuses no new permission. It reads one action at a time — there is no global
+or cross-action feed — and returns:
+
+```json
+{
+  "action_id": "...",
+  "incident_id": "...",
+  "entries": [],
+  "total": 0,
+  "limit": 50,
+  "offset": 0,
+  "truncated": false
+}
+```
+
+`limit` defaults to 50 and is capped at 200; `offset` defaults to 0.
+`entries` are ordered by `created_at` then `id` so the order is stable when
+two rows share a timestamp. `total` counts every audit row for the action,
+and `truncated` is true exactly when `offset + len(entries) < total`. An
+unknown action id returns 404 with code `RESPONSE_NOT_FOUND`.
+
+Reading the history changes nothing: the handler performs no state
+transition, calls nothing like `expire_due()`, and writes no audit row. It
+exposes only the stored `actor` — no `request_id` and no identity
+enrichment — and each entry's optional `detail` is present only where the
+database already recorded one, which is a rejection. An approval,
+cancellation or execution entry therefore never carries a rationale, so the
+execute path cannot surface a reason it never had.
+
+This is the first endpoint on a new `/api/v2` prefix. Mounting it leaves v1
+untouched: v1 still serves every route it served before, and v2 carries only
+this one. There is no schema or migration change.
+
+In the frontend, the workspace audit section loads this endpoint rather than
+the detail payload, showing `loading`, `denied` (403), `error` and `ready`
+states and Previous/Next controls for pages beyond the first. The section is
+display-only; it adds no approve, reject, cancel, execute or delete control.
+
+Focused tests:
+
+```powershell
+# from backend/
+python -m pytest tests/test_response_audit_step42.py -v
+```
+
+```text
+19 passed
+```
+
+and, in `frontend/`:
+
+```text
+npx vitest run src/pages/Step42_audit_history.test.tsx
+```
+#   N e t w o r k - S c a n n e r  
+ 
