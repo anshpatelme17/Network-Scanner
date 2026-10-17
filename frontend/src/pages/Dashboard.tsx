@@ -126,7 +126,7 @@ export function Dashboard() {
     { label: "Events", value: counts.events_total, sub: "Stored security events" },
     { label: "Correlations", value: counts.correlations_total, sub: "Stored correlations" },
     { label: "Incidents", value: counts.incidents_total, sub: "Stored incidents" },
-    { label: "Open incidents", value: counts.incidents_open, sub: "Open / in progress / pending approval" },
+    { label: "Open incidents", value: counts.incidents_open, sub: "Open / acknowledged / investigating" },
     { label: "Risk assessments", value: counts.risk_assessments_total, sub: "Stored assessments" },
     { label: "Open vulnerabilities", value: counts.vulnerabilities_open, sub: "Open finding statuses" },
     { label: "Response actions", value: counts.response_actions_total, sub: "Recorded response actions" },

@@ -1,6 +1,6 @@
 # Architecture - Security Platform (Steps 31-32: Hardening, Production Readiness & Security Review)
 
-Version: `0.1.0` · Status: **foundation + auth/RBAC + discovery + Nmap assessment + telemetry ingestion + correlation formation + risk scoring + generic ingestion + 5 adapters + correlation + risk + incidents + detection + controlled response + adapter simulation + fixture assessment + finding risk/links + live connector foundation + controlled live Wazuh/Defender connectors + bounded audited ingestion pipeline (streaming disabled) + deterministic incident intelligence (rule-bound, operator-initiated) + controlled defensive response & response governance (allow-listed, evidence-backed, approval-gated, expiring, mock-provider only) + hardening/performance/production readiness (bounded pool, deterministic rate limits, request correlation, security headers, bounded body size, non-root containers) + Step 32 security review (five defects remediated: validation-log secret exposure, dead scan-start rate-limit setting, unthrottled login, `REQUIRE_AUTH` not forwarded to the container, unbounded asset-detail risk query) + read-only SOC overview endpoint (Step 9, API complete and verified; dashboard UI deferred — no Node toolchain in this environment)**
+Version: `0.1.0` · Status: **foundation + auth/RBAC + discovery + Nmap assessment + telemetry ingestion + correlation formation + risk scoring + generic ingestion + 5 adapters + correlation + risk + incidents + detection + controlled response + adapter simulation + fixture assessment + finding risk/links + live connector foundation + controlled live Wazuh/Defender connectors + bounded audited ingestion pipeline (streaming disabled) + deterministic incident intelligence (rule-bound, operator-initiated) + controlled defensive response & response governance (allow-listed, evidence-backed, approval-gated, expiring, mock-provider only) + hardening/performance/production readiness (bounded pool, deterministic rate limits, request correlation, security headers, bounded body size, non-root containers) + Step 32 security review (five defects remediated: validation-log secret exposure, dead scan-start rate-limit setting, unthrottled login, `REQUIRE_AUTH` not forwarded to the container, unbounded asset-detail risk query) + read-only SOC overview endpoint (Step 9, API complete and verified; dashboard UI delivered)**
 
 > Step 32 scope note: Step 32 changed no feature, API, schema, permission
 > model or connector behaviour. It found and fixed five defects, each with
@@ -1148,10 +1148,10 @@ Response Engine (approval + audit + simulation/safe-record executors — built; 
         ↓
 Vulnerability Assessment (fixture-backed findings over inventory — built, data only)
         ↓
-Dashboard / Audit (SOC view + audit trails — API complete, UI not delivered)
+Dashboard / Audit (SOC view + audit trails — API complete, UI delivered)
         │   GET /overview (Step 9) rolls up stored state read-only
-        │   UI blocked: no Node/npm/yarn/pnpm and no usable Docker engine
-        │   in this environment, so vitest/tsc/vite cannot run
+        │   Dashboard.tsx consumes it; vitest/tsc/vite build all pass on
+        │   the Node 26 toolchain present in this environment
 ```
 
 Streaming/SIEM live tail and scheduled polling are architected only
@@ -1789,7 +1789,7 @@ performs the same calculation and appends one `INTELLIGENCE_REFRESHED`
 event payloads or credentials.
 
 
-### 13. SOC overview aggregation (Step 9 — PARTIAL: API complete, UI deferred)
+### 13. SOC overview aggregation (Step 9 — API and dashboard UI delivered)
 
 `services/soc_overview.py` answers one question � "what is stored right
 now?" � so a dashboard needs no N requests and no client-side arithmetic.
@@ -1817,13 +1817,12 @@ detection, scoring, correlation or response decision is taken.
   test asserts no action verb is present in the response. The payload
   carries a disclaimer that related events are not proof of compromise.
 
-The UI half of this step is **not delivered**: the dashboard in
-`frontend/src/pages/Dashboard.tsx` is still the Phase 1 status/inventory
-card, because this environment has no Node/npm/yarn/pnpm and no usable
-Docker engine, so `vitest`, `tsc --noEmit` and `vite build` cannot be run.
-Writing untested TypeScript would risk the production build and the
-existing frontend suite, so the endpoint is provided and the UI is left for
-an environment with a working toolchain.
+The UI half of this step **is delivered**: `frontend/src/pages/Dashboard.tsx`
+renders this endpoint — counts, the severity and priority buckets, the bounded
+top-incident list, the recent ingestion audit feed and connector health — beside
+the readiness card. `vitest`, `tsc --noEmit` and `vite build` all run and pass
+on the Node 26 toolchain present in this environment. The dashboard performs no
+client-side arithmetic and offers no action, exactly like the API it reads.
 
 ### 14. Production hardening (Step 10)
 

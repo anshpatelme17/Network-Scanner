@@ -1061,12 +1061,12 @@ Production refuses placeholder secrets / `DEBUG=true` at startup.
 ## 9. Tests
 
 ```powershell
-python -m pytest backend/tests -v        # 962 passed (52 test modules, Steps 1–32)
-cd backend; python -m ruff check app tests # clean
-cd frontend; npm install; npm test       # 98 passed (needs Node; not runnable here)
-npm run build                            # tsc + vite build clean
+python -m pytest backend/tests -v        # 1122 passed, 14 skipped (Steps 1–60)
+cd backend; python -m ruff check app tests # 2 pre-existing findings only (see section 28)
+cd frontend; npm install; npm test       # 246 passed across 39 files (Node 26; see section 28)
+npm run build                            # tsc + vite build, exit 0
 python scripts/smoke_check.py --base-url http://localhost:8000
-python scripts/verify_runtime.py --database-url ...   # 28 passed, exit 0
+python scripts/verify_runtime.py --database-url ...   # deployment harness (needs the compose stack; see section 28)
 ```
 
 Backend tests cover all steps: Step 1 (startup, health/version,
@@ -1149,12 +1149,12 @@ degradation. No tests assert trivial constants; all exercise real behavior.
 
 ## 11. Development status
 
-Steps 1–32 are complete and the Step 32 final audit passed. The items once
+Steps 1–60 are complete, including the Step 32 final audit. The items once
 listed here as candidates — authentication, users and audit-log tables —
 were implemented in Step 20 (see §2, Step 20). Event ingestion and
 normalization contracts followed in Step 3.
 
-No further stage has been started. Security rules still in force: no shell
+Later stages through Step 60 have since been delivered. Security rules still in force: no shell
 execution endpoints, no automated blocking, no autonomous response, and no
 further scanner or live-connector integrations until they are explicitly
 designed and reviewed. With no external service configured, live
@@ -1777,12 +1777,13 @@ compromise.
 Both return a payload of counts, bounded integers, stored identifiers, ISO
 timestamps and fixed labels — no event payloads and no secrets.
 
-## 20. SOC overview endpoint (Phase 2, Step 9 — **PARTIAL**: API complete, UI deferred)
+## 20. SOC overview endpoint (Phase 2, Step 9 — API and dashboard UI delivered)
 
-Step 9 as a whole is **PARTIAL and NOT READY**: the backend half is complete
-and verified (22 tests, below), and the UI half is deferred to a step that is
-blocked on this environment lacking a Node toolchain. Nothing unverified was
-left in the repository.
+Step 9 is **complete**: the endpoint is verified by
+`backend/tests/test_soc_overview_step9.py` and
+`backend/tests/test_soc_overview_integration_step60.py`, and the SOC dashboard
+UI that consumes it is delivered (see below). Nothing unverified was left in
+the repository.
 
 `GET /api/v1/overview` is a single **read-only** roll-up of stored security
 state, intended for a dashboard. It adds no detection, scoring or
@@ -1808,17 +1809,15 @@ connector states, the applied `limits`, and a `disclaimer` stating that
 related events are not proof of compromise and that nothing on the screen
 performs an action.
 
-### Deferred: the SOC dashboard UI
+### Delivered: the SOC dashboard UI
 
-The dashboard UI is **deferred to a separate blocked step**, not delivered.
-`frontend/src/pages/Dashboard.tsx` is still the Phase 1 status/inventory
-card, because this environment has no `node`/`npm`/`npx`/`yarn`/`pnpm` and no
-usable Docker engine, so `vitest`, `tsc --noEmit` and `vite build` cannot be
-run. Writing React/TypeScript that cannot be type-checked or tested would
-risk breaking the production build and the existing frontend suite, so the
-frontend was left untouched deliberately. The endpoint above is the API that
-dashboard will consume; to finish the UI, a working Node toolchain is
-required.
+`frontend/src/pages/Dashboard.tsx` renders this endpoint. It loads
+`GET /api/v1/overview` and shows the counts, the severity and priority buckets,
+the bounded top-incident list, the recent ingestion audit feed and connector
+health, beside the readiness card. It performs no client-side arithmetic and
+offers no action. It is exercised by
+`frontend/src/pages/Step9_SOC_dashboard.test.tsx` (render, empty, error and
+denied states), and its data tables carry accessible names (Step 59).
 
 ### 17.3 No credential material in stored events
 

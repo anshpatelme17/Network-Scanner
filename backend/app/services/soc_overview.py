@@ -38,6 +38,11 @@ from app.models.responses import ResponseAction
 from app.models.risk import RiskAssessment
 from app.models.vulnerabilities import Vulnerability
 from app.services.connectors import describe_all
+from app.services.incident_service import (
+    STATUS_ACKNOWLEDGED,
+    STATUS_INVESTIGATING,
+    STATUS_OPEN,
+)
 from app.services.risk_service import priority_for
 
 # Hard ceiling on any list in this payload. The route may request fewer.
@@ -45,7 +50,11 @@ MAX_ITEMS = 50
 DEFAULT_ITEMS = 10
 
 SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
-OPEN_INCIDENT_STATUSES = ("OPEN", "IN_PROGRESS", "PENDING_APPROVAL")
+# "Open" means every status an incident can still be worked from, taken from
+# the incident domain's own source of truth (OPEN -> ACKNOWLEDGED ->
+# INVESTIGATING; RESOLVED/CLOSED are terminal). Never a bare string list that
+# can drift from the lifecycle.
+OPEN_INCIDENT_STATUSES = (STATUS_OPEN, STATUS_ACKNOWLEDGED, STATUS_INVESTIGATING)
 OPEN_VULNERABILITY_STATUSES = ("open", "new", "in_progress", "detected", "confirmed")
 
 
