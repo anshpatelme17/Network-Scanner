@@ -259,7 +259,10 @@ export function Events() {
         {connectors.length === 0 ? (
           <p className="muted">Connector status unavailable.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table
+            aria-label="Event connector status"
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+          >
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                 {["Source", "Mode", "State", "Detail", "Last check", "Last success", ""].map((h) => (
@@ -342,7 +345,10 @@ export function Events() {
         )}
         {ingestion && (
           <>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+            <table
+              aria-label="Ingestion status"
+              style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+            >
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                   {[
@@ -428,7 +434,10 @@ export function Events() {
       )}
       {state === "ready" && events.length > 0 && (
         <div className="card" style={{ padding: 0, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table
+            aria-label="Received security events"
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+          >
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                 {["Time", "Severity", "Source", "Type", "Title", "Src IP", "Dst IP", "Asset", ""].map(

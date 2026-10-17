@@ -243,7 +243,10 @@ export function RiskPrioritization() {
               <p>No assessed incidents in this view.</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <table
+                  aria-label="Scored incidents"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+                >
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                       {["Priority", "Score", "Severity", "Incident", "Status", "Asset", "Last seen", ""].map(
@@ -315,7 +318,10 @@ export function RiskPrioritization() {
               <p>No unscored incidents in this view.</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <table
+                  aria-label="Unscored incident records"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+                >
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                       {["Incident", "Status", "Severity", "Asset", "Last seen"].map((header) => (

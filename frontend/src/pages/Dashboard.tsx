@@ -256,7 +256,10 @@ export function Dashboard() {
               <p className="muted">No open incidents.</p>
             ) : (
               <div style={{ padding: 0, overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <table
+                  aria-label="Top open incidents"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+                >
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                       {["Incident", "Severity", "Priority", "Status", "Host / asset", "Risk score", "First seen", "Last seen"].map(
@@ -308,7 +311,10 @@ export function Dashboard() {
               <p className="muted">No connectors configured.</p>
             ) : (
               <div style={{ padding: 0, overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <table
+                  aria-label="Connector health"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+                >
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                       {["Source", "Mode", "State", "Connector state", "Last check", "Last poll", "Last error", "Events retrieved"].map(
@@ -355,7 +361,10 @@ export function Dashboard() {
               <p className="muted">No ingestion audit entries yet.</p>
             ) : (
               <div style={{ padding: 0, overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+                <table
+                  aria-label="Recent ingestion audit"
+                  style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+                >
                   <thead>
                     <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                       {["Action", "Actor", "Event", "Detail", "Created"].map((heading) => (

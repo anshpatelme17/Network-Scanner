@@ -232,6 +232,7 @@ export function AssetWorkspace() {
           )}
           {identity === "ready" && asset && (
             <table
+              aria-label="Asset identity attributes"
               style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
             >
               <tbody>
@@ -270,6 +271,7 @@ export function AssetWorkspace() {
               <p>No open services in the latest scan.</p>
             ) : (
               <table
+                aria-label="Detected services"
                 style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
               >
                 <thead>
@@ -363,6 +365,7 @@ export function AssetWorkspace() {
               )}
               {vulnFindings && vulnFindings.items.length > 0 && (
                 <table
+                  aria-label="Asset vulnerability findings"
                   style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
                 >
                   <thead>

@@ -203,7 +203,10 @@ export function Network() {
         {scans.length === 0 ? (
           <p className="muted">No scans yet.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table
+            aria-label="Recent scans"
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+          >
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                 {["Target", "Profile", "Status", "Requested by", "Assets", "Services", "Finished", "Error", ""].map(

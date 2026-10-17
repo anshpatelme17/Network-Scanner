@@ -224,7 +224,10 @@ export function Vulnerabilities() {
       )}
       {state === "ready" && items.length > 0 && (
         <div className="card" style={{ padding: 0, overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table
+            aria-label="Assessment findings"
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+          >
             <thead>
               <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                 {["Severity", "Title", "Host/IP", "Port", "CVE", "CVSS", "Scanner", "Status", ""].map(
