@@ -1062,8 +1062,8 @@ Production refuses placeholder secrets / `DEBUG=true` at startup.
 
 ```powershell
 python -m pytest backend/tests -v        # 1122 passed, 14 skipped (Steps 1–60)
-cd backend; python -m ruff check app tests # 2 pre-existing findings only (see section 28)
-cd frontend; npm install; npm test       # 246 passed across 39 files (Node 26; see section 28)
+cd backend; python -m ruff check app tests # 2 pre-existing findings only (note in section 28)
+cd frontend; npm install; npm test       # 246 passed across 39 files (Node 26; flag in section 28)
 npm run build                            # tsc + vite build, exit 0
 python scripts/smoke_check.py --base-url http://localhost:8000
 python scripts/verify_runtime.py --database-url ...   # deployment harness (needs the compose stack; see section 28)
@@ -2618,9 +2618,9 @@ python -m pytest tests/test_incident_audit_integrity_step49.py     # 7 passed
 
 Steps 47-49 are test-only; the related audit/incident/timeline suites remain
 green and `ruff check` is clean. Step 50 (frontend accountability refinement)
-is deferred in this environment, which has no Node runtime to run
-`vitest`/`tsc`/the production build, so no unverifiable frontend change is
-committed.
+was later delivered: once the Node 26 toolchain became available, `vitest`,
+`tsc` and the production build all ran and pass, so the refinement shipped
+(see §9 for the current totals and §28 for the recorded baseline).
 
 ### 27.7 Boundaries, stated plainly
 
@@ -2634,12 +2634,18 @@ committed.
   the `id` (UUID) tiebreak, so *insertion* order is not recoverable when
   timestamps collide. The order is deterministic, but not insertion-ordered.
 
-## 28. Release verification baseline (Phase 4, Steps 52-55)
+## 28. Release verification baseline (Phase 4, Steps 52-55; historical snapshot)
 
 This section records the repeatable verification that establishes the release
 baseline for the Network Scanner at the close of Phase 4, together with the
 results observed when it was run for this step. Re-run the blocks top to bottom;
 a release is checked against the recorded results.
+
+The counts below are a **historical snapshot** captured at Steps 52-55, before
+Steps 56-60. Those later steps added tests without changing this method, so the
+current totals differ: see §9 for the live figures (backend 1,122 passed /
+14 skipped / 0 failed; frontend 246 passed across 39 files). The commands, the
+ruff note and the Node 26 caveat below remain current.
 
 Backend (from `backend/`):
 
@@ -2657,7 +2663,7 @@ npm run lint                       # tsc --noEmit, exit 0
 npm run build                      # tsc + vite build, exit 0
 ```
 
-Recorded baseline:
+Recorded baseline (recorded at Steps 52-55):
 
 - `python -m pytest` - **1116 passed, 14 skipped, 0 failed**. The 14 skips are
   environment-gated: they require a live PostgreSQL (for example the Step 42
