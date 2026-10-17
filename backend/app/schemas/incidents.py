@@ -219,7 +219,15 @@ class AuditEntry(BaseModel):
 
 class IncidentAuditResponse(BaseModel):
     incident_id: str
+    # Step 64 (additive): the trail is paged and bounded (same convention as
+    # the Step 42A response-audit reader). ``total`` is the full number of
+    # facts so a caller can page the complete history; ``truncated`` is true
+    # exactly when ``offset + len(entries) < total``.
     entries: list[AuditEntry] = Field(default_factory=list)
+    total: int = 0
+    limit: int | None = None
+    offset: int | None = None
+    truncated: bool = False
 
 
 class IncidentObservation(BaseModel):

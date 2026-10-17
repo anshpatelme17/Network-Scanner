@@ -611,19 +611,37 @@ def get_audit(
     incident_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("VIEW_AUDIT")),
+    limit: int = Query(default=50, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ):
+    """Incident audit trail (bounded, Step 64).
+
+    Same convention as the response-audit reader (Step 42A): ``limit``
+    defaults to 50 and is capped at 200, ``offset`` defaults to 0, rows are
+    ordered ``(created_at, id)``, and ``truncated`` is true exactly when
+    ``offset + len(entries) < total``.
+    """
     row = _get_or_404(db, incident_id)
     if row is None:
         return error_response(
             "INCIDENT_NOT_FOUND", f"No incident with id {incident_id}.", status.HTTP_404_NOT_FOUND
         )
+    total = db.scalar(
+        select(func.count(IncidentAudit.id)).where(IncidentAudit.incident_id == row.id)
+    ) or 0
     audits = db.scalars(
         select(IncidentAudit)
         .where(IncidentAudit.incident_id == row.id)
         .order_by(IncidentAudit.created_at, IncidentAudit.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
     return {
         "incident_id": row.id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + len(audits) < total,
         "entries": [
             {
                 "action": audit.action,

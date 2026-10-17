@@ -98,7 +98,9 @@ def inventory_summary(
     total_assets = db.scalar(select(func.count(Asset.id))) or 0
     active_assets = db.scalar(select(func.count(Asset.id)).where(Asset.state == "up")) or 0
     total_services = db.scalar(select(func.count(DiscoveredService.id))) or 0
-    last_scan = db.scalar(select(ScanJob).order_by(desc(ScanJob.created_at)).limit(1))
+    last_scan = db.scalar(
+        select(ScanJob).order_by(desc(ScanJob.created_at), ScanJob.id).limit(1)
+    )
     return {
         "total_assets": total_assets,
         "active_assets": active_assets,

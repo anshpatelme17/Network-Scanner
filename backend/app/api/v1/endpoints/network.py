@@ -94,7 +94,9 @@ def list_scans(
     auth: AuthContext = Depends(require_permission("READ_ASSETS")),
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    jobs = db.scalars(select(ScanJob).order_by(desc(ScanJob.created_at)).limit(limit)).all()
+    jobs = db.scalars(
+        select(ScanJob).order_by(desc(ScanJob.created_at), ScanJob.id).limit(limit)
+    ).all()
     return [_job_response(db, job) for job in jobs]
 
 

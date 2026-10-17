@@ -990,26 +990,35 @@ dashboard/audit) is documented there but **not built**.
 ```text
 backend/
   app/
-    api/v1/endpoints/  # health, readiness, version
-    core/              # config, logging, errors
-    database/          # engine/session, Base (no domain tables)
-    models/            # empty by design (future: assets, events, ...)
-    schemas/           # health/readiness/version/error schemas
-    services/          # health service (pattern for future engines)
-    utils/             # future pure helpers
+    api/v1/endpoints/  # assets, events, network, correlations, risk, incidents,
+                       # responses, vulnerabilities, ingestion, connectors,
+                       # auth, users, overview, health
+    api/v2/endpoints/  # read-only response audit history (Step 42A)
+    core/              # config, logging, errors, ratelimit, request_context
+    database/          # engine/session, Base
+    models/            # assets, events, scans, correlations, incidents, risk,
+                       # responses, vulnerabilities, ingestion, auth
+    schemas/           # request/response schemas per domain
+    services/          # scan, event, correlation, incident, risk, response
+                       # governance, connectors, ingestion, vulnerability
+    utils/             # pure helpers (currently empty)
     main.py            # app factory + lifespan
-  tests/               # test_health.py, test_config.py
-  alembic/             # env.py wired, versions/ empty
+  tests/               # pytest suite (SQLite-isolated); migration checks
+  alembic/             # env.py + versions/ (head: step41_response_rejection_reason)
   requirements.txt     # pinned
   Dockerfile
 frontend/
   src/
-    components/layout/ # Sidebar, Header, StatusBadge
-    pages/             # Dashboard, Assets, Network + 5 honest placeholders
-    services/ hooks/ types/ layouts/ styles/
+    components/        # layout/ (Sidebar, Header, StatusBadge), incidents/
+    context/ hooks/ layouts/ services/ styles/ types/
+    pages/             # Dashboard, Assets, AssetWorkspace, Events, AlertTriage,
+                       # Correlations, Risk, RiskPrioritization, Incidents,
+                       # Network, Vulnerabilities, Response, ResponseCenter,
+                       # Login + a Settings placeholder
   Dockerfile + nginx.conf
 docs/architecture.md
-scripts/smoke_check.py # read-only HTTP smoke test
+scripts/smoke_check.py    # read-only HTTP smoke test
+scripts/verify_runtime.py # deployment verification harness
 docker-compose.yml  .env.example  README.md
 ```
 
@@ -1061,7 +1070,7 @@ Production refuses placeholder secrets / `DEBUG=true` at startup.
 ## 9. Tests
 
 ```powershell
-python -m pytest backend/tests -v        # 1122 passed, 14 skipped (Steps 1–60)
+python -m pytest backend/tests -v        # 1131 passed, 14 skipped (Steps 1–64)
 cd backend; python -m ruff check app tests # 2 pre-existing findings only (note in section 28)
 cd frontend; npm install; npm test       # 246 passed across 39 files (Node 26; flag in section 28)
 npm run build                            # tsc + vite build, exit 0
@@ -1149,12 +1158,12 @@ degradation. No tests assert trivial constants; all exercise real behavior.
 
 ## 11. Development status
 
-Steps 1–60 are complete, including the Step 32 final audit. The items once
+Steps 1–64 are complete, including the Step 32 final audit. The items once
 listed here as candidates — authentication, users and audit-log tables —
 were implemented in Step 20 (see §2, Step 20). Event ingestion and
 normalization contracts followed in Step 3.
 
-Later stages through Step 60 have since been delivered. Security rules still in force: no shell
+Later stages through Step 64 have since been delivered. Security rules still in force: no shell
 execution endpoints, no automated blocking, no autonomous response, and no
 further scanner or live-connector integrations until they are explicitly
 designed and reviewed. With no external service configured, live
@@ -1334,6 +1343,29 @@ a limit never widens what an authorized caller may do.
   report `NOT_CONFIGURED`. Fixture/mock providers remain available for
   deterministic testing. No real-world deployment validation was
   performed.
+
+### 12.10 Deterministic and bounded read paths (Steps 57, 58, 63, 64)
+
+List and history endpoints were audited for two read-path defects: orderings
+that were not deterministic when records share a timestamp, and reads whose
+cost grew with stored data instead of with the caller's request. Each fix is
+additive and keeps every existing response field.
+
+| Surface | Before | After |
+|---|---|---|
+| `GET /assets`, `GET /events`, `GET /correlations` (Step 57) | ordered by one timestamp with no tie-break; offset paging could duplicate or skip rows on an unchanged set | ordered `<timestamp> DESC, id ASC`, so paging is stable |
+| `GET /network/scans`, `GET /vulnerability-scans`, `GET /assets/summary` (Step 63) | the same single-column ordering; the summary's "last scan" pick was ambiguous under tied `created_at` | an `id` tie-break on both lists and on the summary's last-scan selection |
+| `GET /events/{id}/audit`, `GET /incidents/{id}/audit` (Step 64) | returned every audit fact for the subject, with no ceiling | paged `limit`/`offset` (default 50, capped 200), ordered `(created_at, id)`, with `total` and `truncated` |
+
+Step 64 reuses the exact convention of the Step 42A response-audit reader
+(section 25): `limit` defaults to 50 and is capped at 200, `offset` defaults
+to 0, and `truncated` is true exactly when `offset + len(entries) < total`.
+The added `total`/`limit`/`offset`/`truncated` fields are additive and
+`entries` keeps its existing shape, so current callers are unaffected except
+that a subject with more than 200 facts is now paged rather than returned in
+one response. `risk_service`'s recompute still reads all `RiskAssessment`
+rows to evict stale ones; that scan is inherent to the eviction and was left
+unchanged deliberately.
 
 ## 13. Security review, remediation and final audit (Step 32)
 
@@ -2642,8 +2674,8 @@ results observed when it was run for this step. Re-run the blocks top to bottom;
 a release is checked against the recorded results.
 
 The counts below are a **historical snapshot** captured at Steps 52-55, before
-Steps 56-60. Those later steps added tests without changing this method, so the
-current totals differ: see §9 for the live figures (backend 1,122 passed /
+Steps 56-64. Those later steps added tests without changing this method, so the
+current totals differ: see §9 for the live figures (backend 1,131 passed /
 14 skipped / 0 failed; frontend 246 passed across 39 files). The commands, the
 ruff note and the Node 26 caveat below remain current.
 

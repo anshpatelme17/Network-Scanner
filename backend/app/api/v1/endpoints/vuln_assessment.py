@@ -141,7 +141,7 @@ def list_vuln_scans(
     jobs = db.scalars(
         select(ScanJob)
         .where(ScanJob.scan_type == vulnerability_service.SCAN_TYPE_VULNERABILITY_VALUE)
-        .order_by(desc(ScanJob.created_at))
+        .order_by(desc(ScanJob.created_at), ScanJob.id)
         .limit(limit)
     ).all()
     return [_scan_response(db, job) for job in jobs]

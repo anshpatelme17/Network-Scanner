@@ -215,8 +215,20 @@ def get_event_audit(
     event_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("READ_EVENTS")),
+    limit: int = Query(default=50, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ):
-    """Chronological ingest lifecycle facts for one event (Step 23)."""
+    """Chronological ingest lifecycle facts for one event (Step 23).
+
+    Step 64 (additive): the trail is bounded with the same convention as
+    the response-audit reader (Step 42A) - ``limit`` defaults to 50 and is
+    capped at 200, ``offset`` defaults to 0. Rows are ordered
+    ``(created_at, id)``; ``total`` reports how many facts exist and
+    ``truncated`` is true exactly when ``offset + len(entries) < total``,
+    so the full history stays reachable by paging. The audit grows on
+    every replay, so an unbounded select was the one read on this surface
+    with no ceiling.
+    """
     from app.models.events import EventAudit
 
     event = db.scalar(select(SecurityEvent).where(SecurityEvent.id == event_id))
@@ -224,13 +236,22 @@ def get_event_audit(
         return error_response(
             "EVENT_NOT_FOUND", f"No event with id {event_id}.", status.HTTP_404_NOT_FOUND
         )
+    total = db.scalar(
+        select(func.count(EventAudit.id)).where(EventAudit.event_id == event_id)
+    ) or 0
     rows = db.scalars(
         select(EventAudit)
         .where(EventAudit.event_id == event_id)
         .order_by(EventAudit.created_at, EventAudit.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
     return {
         "event_id": event_id,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + len(rows) < total,
         "entries": [
             {
                 "action": row.action,
