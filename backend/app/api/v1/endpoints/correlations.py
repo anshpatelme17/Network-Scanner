@@ -120,7 +120,7 @@ def list_correlations(
         count_query = count_query.where(Correlation.rule_id == rule_id)
     total = db.scalar(count_query) or 0
     rows = db.scalars(
-        query.order_by(desc(Correlation.updated_at)).limit(limit).offset(offset)
+        query.order_by(desc(Correlation.updated_at), Correlation.id).limit(limit).offset(offset)
     ).all()
     return {
         "items": [_summary(row) for row in rows],

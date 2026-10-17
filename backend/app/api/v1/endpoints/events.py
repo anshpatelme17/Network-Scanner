@@ -152,7 +152,7 @@ def list_events(
         count_query = count_query.where(*criteria)
     total = db.scalar(count_query) or 0
     events = db.scalars(
-        query.order_by(desc(SecurityEvent.event_time)).limit(limit).offset(offset)
+        query.order_by(desc(SecurityEvent.event_time), SecurityEvent.id).limit(limit).offset(offset)
     ).all()
     return {
         "items": [_to_response(event) for event in events],

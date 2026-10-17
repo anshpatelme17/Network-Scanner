@@ -71,7 +71,9 @@ def list_assets(
         query = query.where(Asset.state == state)
         count_query = count_query.where(Asset.state == state)
     total = db.scalar(count_query) or 0
-    assets = db.scalars(query.order_by(desc(Asset.last_seen)).limit(limit).offset(offset)).all()
+    assets = db.scalars(
+        query.order_by(desc(Asset.last_seen), Asset.id).limit(limit).offset(offset)
+    ).all()
     items = []
     for asset in assets:
         service_count = (
