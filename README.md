@@ -2634,5 +2634,58 @@ committed.
 - Same-second audit rows share `created_at`; the returned order then falls to
   the `id` (UUID) tiebreak, so *insertion* order is not recoverable when
   timestamps collide. The order is deterministic, but not insertion-ordered.
+
+## 28. Release verification baseline (Phase 4, Steps 52-55)
+
+This section records the repeatable verification that establishes the release
+baseline for the Network Scanner at the close of Phase 4, together with the
+results observed when it was run for this step. Re-run the blocks top to bottom;
+a release is checked against the recorded results.
+
+Backend (from `backend/`):
+
+```bash
+python -m ruff check app tests     # 2 pre-existing findings only (see note)
+python -m pytest                   # 1116 passed, 14 skipped, 0 failed
+```
+
+Frontend (from `frontend/`), with the Node 26 flag below:
+
+```bash
+$env:NODE_OPTIONS="--no-experimental-webstorage"   # PowerShell
+npm run test                       # 233 passed across 38 files
+npm run lint                       # tsc --noEmit, exit 0
+npm run build                      # tsc + vite build, exit 0
+```
+
+Recorded baseline:
+
+- `python -m pytest` - **1116 passed, 14 skipped, 0 failed**. The 14 skips are
+  environment-gated: they require a live PostgreSQL (for example the Step 42
+  concurrency checks, §24.7), and they pass when the compose database is present.
+- `python -m ruff check app tests` - **two pre-existing findings only**, both in
+  `backend/tests/test_risk_consistency.py` (an unused `select` import and an
+  import block flagged for order). Both predate Phase 4 and are untouched by it;
+  they are left as-is rather than masked, so the gate stays honest.
+- `npm run test` - **233 tests across 38 files, 0 failed** (Vitest, jsdom).
+- `npm run lint` and `npm run build` - **exit 0** (`tsc --noEmit`, then
+  `tsc --noEmit && vite build`).
+
+Node 26 caveat (read before running the frontend block): Node 26 defines an
+experimental global `localStorage` that is `undefined` and shadows jsdom's, so
+`window.localStorage.clear()` throws in `src/pages/Step20.test.tsx`. Run the
+suite with `NODE_OPTIONS=--no-experimental-webstorage`; the flag removes only the
+shadowing global and changes no test. On older Node it is unnecessary.
+
+Deployment baseline: the container + PostgreSQL harness of §24 remains the
+deployment-level release check (`python scripts/verify_runtime.py ...` - 36
+passed). It and the PostgreSQL-gated concurrency tests need the compose stack and
+are not part of the unit-suite baseline above.
+
+Phase 4 close: Steps 47-49 and 52-54 are verification-only (they add tests or
+documentation and change no production behaviour); Step 50 refined the incident
+accountability UI (§27.6 recorded it as deferred for lack of a Node runtime - that
+blocker was resolved and the refinement shipped); Step 51 documented operations
+(§27). This section is the snapshot a future release diff is measured against.
 #   N e t w o r k - S c a n n e r  
  
