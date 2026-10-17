@@ -96,6 +96,7 @@ a { color: inherit; }
 .card h5 { margin: 12px 0 4px; font-size: 0.88rem; color: var(--text-muted); }
 .timeline-day { list-style: none; margin: 10px 0 4px; font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .timeline-truncated { margin-top: 8px; }
+.activity-truncated { margin-top: 8px; }
 .card p { margin: 6px 0; color: var(--text-muted); font-size: 0.92rem; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 18px; }

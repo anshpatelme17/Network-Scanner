@@ -177,11 +177,18 @@ export function IncidentActivity({
       {state === "ready" && activity && activity.items.length > 0 && (
         <>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+            <table
+              aria-label="Incident accountability activity"
+              style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}
+            >
               <thead>
                 <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
                   {["Time", "Event", "Actor", "Action", "Status"].map((heading) => (
-                    <th key={heading} style={{ padding: "10px 14px", color: "var(--text-muted)" }}>
+                    <th
+                      key={heading}
+                      scope="col"
+                      style={{ padding: "10px 14px", color: "var(--text-muted)" }}
+                    >
                       {heading}
                     </th>
                   ))}
@@ -196,12 +203,17 @@ export function IncidentActivity({
                     <td style={{ padding: "10px 14px" }}>
                       <span className="badge info">{item.event}</span>
                     </td>
-                    <td style={{ padding: "10px 14px" }}>{item.actor}</td>
-                    <td style={{ padding: "10px 14px" }}>
+                    <td style={{ padding: "10px 14px", overflowWrap: "anywhere" }}>
+                      {item.actor}
+                    </td>
+                    <td style={{ padding: "10px 14px", overflowWrap: "anywhere" }}>
                       {item.action_type ?? "response action"}{" "}
                       <code>{item.action_id}</code>
                     </td>
-                    <td style={{ padding: "10px 14px" }} className="muted">
+                    <td
+                      style={{ padding: "10px 14px", overflowWrap: "anywhere" }}
+                      className="muted"
+                    >
                       {item.previous_status ?? "—"} → {item.new_status ?? "—"}
                       {item.detail ? ` · ${item.detail}` : ""}
                     </td>

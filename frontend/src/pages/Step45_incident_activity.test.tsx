@@ -271,6 +271,21 @@ describe("Incident accountability activity (Phase 4, Step 45)", () => {
     expect(eventBadges("RESPONSE_REQUESTED")).toHaveLength(0);
   });
 
+  it("labels the table and reports a truncated server window", async () => {
+    mockFetch(baseRoute(1));
+    render(
+      <MemoryRouter>
+        <Incidents />
+      </MemoryRouter>,
+    );
+    await openIncidentDetail();
+
+    expect(
+      screen.getByRole("table", { name: "Incident accountability activity" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/More activity exists/)).toBeInTheDocument();
+  });
+
   it("shows an honest empty state when nothing matches", async () => {
     const emptyRoute: Handler = (url, init) => {
       if (url.includes("/activity?")) {
