@@ -2532,5 +2532,107 @@ asserting it: backend `1082 passed, 14 skipped, 0 failed`; frontend
 clean apart from two pre-existing errors in `test_risk_consistency.py`; and a
 clean production build. No migration, no schema change and no write path was
 added by Steps 43-45.
+
+## 27. Incident accountability operations (Phase 4, Steps 47-51)
+
+Steps 42-46 delivered three read-only views over the append-only controlled
+response audit. Steps 47-49 then hardened and *verified* those contracts
+(parameter bounds, cross-surface consistency, incident lifecycle integrity),
+and Step 51 records how they are operated. Nothing here adds a write path, a
+migration or a schema change: every surface reads the same `response_audit`
+rows that Steps 41-42 already wrote, and the incident trail reads the
+`incident_audit` rows from Step 17.
+
+### 27.1 The three accountability read surfaces
+
+| Surface | Endpoint | Permission | Scope | Ordering |
+| --- | --- | --- | --- | --- |
+| Per-action audit (v2) | `GET /api/v2/responses/{action_id}/audit` | `READ_RESPONSES` | one response action | `created_at, id` |
+| Incident timeline | `GET /api/v1/incidents/{id}/timeline` | `READ_INCIDENTS` (+`READ_RESPONSES` for response entries) | one incident, all entry kinds | `at`, then a fixed rank tiebreak |
+| Incident activity | `GET /api/v1/incidents/{id}/activity` | `READ_INCIDENTS` **and** `READ_RESPONSES` | one incident's response lifecycle | `created_at, id` |
+
+All three are strictly read-only: they transition nothing, run no expiry
+sweep and write no audit row of their own. Pagination defaults to `limit=50`
+capped at `200` with `offset>=0`; `truncated` is `true` exactly when
+`offset + len(page) < total`, and `total` is computed before pagination.
+Unknown ids reuse the stored conventions (`RESPONSE_NOT_FOUND`,
+`INCIDENT_NOT_FOUND`). No entry exposes the internal `request_id`.
+
+### 27.2 One source, verified consistent
+
+The per-action audit, the timeline's `kind == "response"` entries and the
+activity feed are three projections of the *same* `response_audit` table, so a
+row must read identically everywhere. Step 48 pins that: the shared fields
+(`event`, `actor`, `previous_status`, `new_status`, `policy_version`,
+`created_at`, `detail`) and the order are identical between the v2 feed and the
+activity feed, the timeline agrees field-for-field, no surface invents a
+transition a still-pending action never had, and a rejection rationale is
+byte-identical between the v2 audit and the activity feed while being
+deliberately *not* duplicated onto the timeline (its `detail` is a derived
+`actor: old -> new` string). The rationale stays on the per-action audit and
+the activity feed only.
+
+### 27.3 Query-contract hardening (Step 47)
+
+Step 47 adds regression tests for the activity endpoint's boundaries and
+precedence rather than changing it: `actor<=128` and `action_id<=64` accept the
+exact maximum and reject one more with a `422 VALIDATION_ERROR`; a malformed
+`since`/`until` is a `422`; a timezone-carrying window is normalised to naive
+UTC before comparison, so an offset instant filters correctly; several filters
+combine and narrow both `items` and `total`; and an unknown incident is a `404`
+even when the filter itself is invalid (the incident lookup precedes filter
+validation).
+
+### 27.4 Incident lifecycle trail (Step 49)
+
+Alongside the response audit, the incident's own trail (`incident_audit`) is
+covered adversarially: opening an incident appends exactly one attributed,
+incident-scoped `OPENED` row and no row is visible under another incident; an
+accepted status sequence appends a coherent `STATUS_CHANGED` chain with no gap;
+a refused transition (unknown status or a forbidden edge) is a `422
+INVALID_TRANSITION` that writes no row and leaves the incident untouched; a
+no-op edit appends nothing; the stored actor is bounded to the column and
+defaults to `system`; reading the timeline is inert and repeatable; and an
+unrecognised stored action still renders as the generic `audit` kind with the
+full entry contract. Both trails are append-only at the ORM layer (Step 11)
+and, on PostgreSQL, at the database layer (Step 12).
+
+### 27.5 Operating the surfaces
+
+Read the per-action audit (`/api/v2/.../audit`) when a reviewer needs the full
+rationale for one decision - it is the only surface that carries the stored
+rejection `detail`. Read the incident activity feed when reconstructing what
+happened across an incident's actions: filter by exact `event`, `actor`,
+`action_id` and a `since`/`until` window, then page. Read the incident timeline
+for a single merged chronology of observations, evidence events, incident
+lifecycle changes and (for callers who may read responses) response lifecycle
+entries. Access is split so a caller may see incidents without thereby seeing
+controlled-response history.
+
+### 27.6 Verification
+
+```text
+python -m pytest tests/test_incident_activity_contract_step47.py   # 7 passed
+python -m pytest tests/test_audit_history_consistency_step48.py    # 5 passed
+python -m pytest tests/test_incident_audit_integrity_step49.py     # 7 passed
+```
+
+Steps 47-49 are test-only; the related audit/incident/timeline suites remain
+green and `ruff check` is clean. Step 50 (frontend accountability refinement)
+is deferred in this environment, which has no Node runtime to run
+`vitest`/`tsc`/the production build, so no unverifiable frontend change is
+committed.
+
+### 27.7 Boundaries, stated plainly
+
+- These read surfaces are read-only views. They are not themselves
+  tamper-evidence: append-only enforcement comes from the ORM guard (Step 11)
+  and the PostgreSQL triggers plus a restricted role (Step 12), and the
+  documented `TRUNCATE`/`DROP TABLE`/superuser boundary there still applies.
+- There is no global or cross-incident response feed, and no free-text search
+  or identity enrichment - filters are exact matches on stored values only.
+- Same-second audit rows share `created_at`; the returned order then falls to
+  the `id` (UUID) tiebreak, so *insertion* order is not recoverable when
+  timestamps collide. The order is deterministic, but not insertion-ordered.
 #   N e t w o r k - S c a n n e r  
  

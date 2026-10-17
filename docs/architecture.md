@@ -1939,3 +1939,23 @@ apart so an error message cannot be read as an answer.
 
 Running it exposed eight defects in the harness itself and one in the guard —
 none of which could turn a real failure into a pass. See README 24.5 and 24.6.
+
+### 18. Incident accountability surfaces (Steps 42-51)
+
+Three read-only projections expose the append-only controlled-response audit:
+the per-action v2 feed (`GET /api/v2/responses/{action_id}/audit`), the incident
+timeline's `kind == "response"` entries (`GET /api/v1/incidents/{id}/timeline`),
+and the incident activity feed (`GET /api/v1/incidents/{id}/activity`). They
+share one permission model — `READ_RESPONSES`, or `READ_INCIDENTS` plus
+`READ_RESPONSES` for the incident-scoped views — and one source, `response_audit`,
+so Steps 47-49 verify the surfaces agree field-for-field and in order rather than
+diverging. The incident's own trail (`incident_audit`) is projected into the
+timeline as `opened`/`status`/`evidence`/`update` entries.
+
+All three are strictly read-only (no transition, no expiry sweep, no audit row
+of their own) and bounded: `limit` defaults to 50 and is capped at 200, `offset`
+defaults to 0, and pages are `created_at, id`-ordered (the timeline layers a
+fixed rank tiebreak on top of `at`). The rejection rationale is deliberately kept
+off the timeline and carried only by the per-action audit and the activity feed.
+Append-only enforcement is unchanged and remains the two layers from Steps 11
+(ORM guard) and 12 (PostgreSQL triggers plus a restricted role). See README 27.
