@@ -74,17 +74,20 @@ def list_assets(
     assets = db.scalars(
         query.order_by(desc(Asset.last_seen), Asset.id).limit(limit).offset(offset)
     ).all()
-    items = []
-    for asset in assets:
-        service_count = (
-            db.scalar(
-                select(func.count(DiscoveredService.id)).where(
-                    DiscoveredService.asset_id == asset.id
-                )
-            )
-            or 0
-        )
-        items.append(_to_asset_response(asset, service_count))
+    # One grouped aggregate for the whole page, instead of one COUNT per asset
+    # (Step 58 N+1 fix): query volume is constant in page size, and assets with
+    # no discovered services simply have no row in the result (count 0).
+    service_counts: dict[str, int] = {}
+    if assets:
+        service_counts = {
+            asset_id: int(count)
+            for asset_id, count in db.execute(
+                select(DiscoveredService.asset_id, func.count(DiscoveredService.id))
+                .where(DiscoveredService.asset_id.in_([asset.id for asset in assets]))
+                .group_by(DiscoveredService.asset_id)
+            ).all()
+        }
+    items = [_to_asset_response(asset, service_counts.get(asset.id, 0)) for asset in assets]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

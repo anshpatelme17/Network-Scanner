@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.assets import Asset, DiscoveredService
@@ -78,18 +78,29 @@ def _priority_buckets(db: Session) -> dict[str, int]:
     a detached or evicted assessment can never masquerade as current risk.
     Incidents with no valid assessment fall into ``UNSCORED`` rather than
     being silently dropped or given an invented priority.
+
+    Aggregated database-side in a single grouped query, so no incident row is
+    read into Python (Step 58). The ``CASE`` mirrors ``priority_for``'s fixed
+    bands: ``clamp_score`` limits values to 0-100 and therefore can never move
+    a score across the 40/60/80 boundaries, so the buckets are identical.
     """
+    score = RiskAssessment.score
+    bucket = case(
+        (score.is_(None), "UNSCORED"),
+        (score >= 80, "P1"),
+        (score >= 60, "P2"),
+        (score >= 40, "P3"),
+        else_="P4",
+    )
     rows = db.execute(
-        select(RiskAssessment.score)
+        select(bucket.label("bucket"), func.count())
         .select_from(Incident)
         .outerjoin(RiskAssessment, RiskAssessment.id == Incident.risk_assessment_id)
-    ).scalars()
+        .group_by(bucket)
+    ).all()
     counts = {"P1": 0, "P2": 0, "P3": 0, "P4": 0, "UNSCORED": 0}
-    for score in rows:
-        if score is None:
-            counts["UNSCORED"] += 1
-        else:
-            counts[priority_for(int(score))] += 1
+    for name, count in rows:
+        counts[str(name)] = int(count)
     return counts
 
 
