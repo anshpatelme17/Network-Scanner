@@ -115,6 +115,7 @@ a { color: inherit; }
 .badge.warn { background: var(--warn-bg); color: var(--warn); }
 .badge.bad { background: var(--bad-bg); color: var(--bad); }
 .badge.neutral { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
+.badge.info { background: #e8f0fb; color: var(--accent); }
 
 .muted { color: var(--text-muted); font-size: 0.88rem; }
 .button {

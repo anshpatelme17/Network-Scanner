@@ -57,6 +57,17 @@ const PREVIEW = {
   policy_version: "1.0.0",
 };
 
+// Step 42A: the workspace loads audit history from the read-only v2 feed.
+const AUDIT_PAGE = {
+  action_id: "resp-1",
+  incident_id: "inc-1",
+  entries: DETAIL.audit,
+  total: DETAIL.audit.length,
+  limit: 50,
+  offset: 0,
+  truncated: false,
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(
     async (url: unknown, init?: RequestInit) => ({
@@ -69,6 +80,7 @@ function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
 
 function route(url: string): unknown {
   if (url.endsWith("/preview")) return PREVIEW;
+  if (url.includes("/api/v2/responses/resp-1/audit")) return AUDIT_PAGE;
   if (url.includes("/api/v1/responses/resp-1")) return DETAIL;
   return PAGE;
 }

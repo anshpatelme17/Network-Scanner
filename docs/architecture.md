@@ -1234,6 +1234,58 @@ Each future engine gets:
   action can only leave `COMPLETED` through an explicit, separately
   authorized rollback that reports `UNSUPPORTED` rather than guessing a
   previous state.
+- **A decision is serialized by the row lock, not by hope** (Step 42) —
+  `response_governance._locked_action()` reads the candidate row with
+  `SELECT ... FOR UPDATE`, so a second decision cannot read the row while
+  the first still holds it. Under READ COMMITTED — PostgreSQL's default and
+  what this deployment uses — the blocked session re-reads the *newly
+  committed* version of the row once the lock is released, which is why the
+  competing decision then sees status `APPROVED` and is refused by the
+  stored-status guard in the same transaction that would have written it.
+  The refusal is therefore a *consequence* of the lock, not a separate
+  check that could be bypassed by timing.
+
+  The guarantee is deliberately not claimed beyond what is demonstrated.
+  On SQLite the clause is silently dropped (proven by a test that compiles
+  the statement and asserts `FOR UPDATE` is absent), so the overlapping-
+  decision tests skip there; on PostgreSQL they execute in an isolated
+  schema with the competing session observed waiting on a
+  `pg_locks.transactionid` entry. Skipping is how the absence of evidence is
+  reported — never as a pass. What is verified is the single-database
+  serialization described above; distributed contention across replicas is
+  not claimed, because a lock is held per transaction on one server.
+- **Audit history is a separate, read-only surface** (Step 42A) — one
+  action's audit history is served by
+  `GET /api/v2/responses/{action_id}/audit`, a bounded (`limit` ≤ 200),
+  paginated, strictly read-only projection ordered by `created_at, id`.
+  It is deliberately additive: v1 is untouched and the endpoint lives on a
+  new `/api/v2` prefix that carries no other route. Reading it performs no
+  state transition, calls nothing like `expire_due()`, and writes no audit
+  row. It reuses `READ_RESPONSES` (no new permission) and exposes only the
+  stored `actor` — no `request_id` and no identity enrichment. The optional
+  `detail` is present only where the database already recorded it (a
+  rejection), so an approval, cancellation or execution entry never carries
+  a rationale.
+- **The audit trail is surfaced three ways without ever mutating it**
+  (Steps 43-45) — Step 43 is a verification-only suite (`no production
+  change`) that pins the audit integrity properties: a closed event
+  vocabulary (`RESPONSE_AUDIT_EVENTS`), only vocabulary events recorded,
+  a consistent `previous_status -> new_status` chain, rejection reasons
+  sanitized (blank becomes absent, overlong is a `422`), a rationale
+  attached only to a rejection, no row written by a refused transition,
+  no `request_id` ever returned, and an unsafe inbound `X-Request-ID`
+  replaced with a fresh opaque id. Step 44 interleaves the response
+  lifecycle into the incident timeline (`kind: "response"`; optional
+  `action_id`/`action_type`/`event`/`actor`/`previous_status`/`new_status`),
+  gated by `READ_RESPONSES`, bounded to the most recent `max_entries`, with
+  the `action_type` resolved in one batched lookup and a deterministic total
+  order so repeated reads agree. Step 45 adds the per-incident
+  accountability feed `GET /api/v1/incidents/{id}/activity`, requiring both
+  `READ_INCIDENTS` and `READ_RESPONSES`, with server-side exact-match filters
+  (`event`, `actor`, `action_id`, `since`, `until`), `limit` ≤ 200,
+  `offset` and `truncated`, ordered by `created_at, id`. Every one of these
+  surfaces is strictly read-only: no state transition, no `expire_due()`,
+  no audit row written.
 
 ## 5. Risks / review before Step 29
 

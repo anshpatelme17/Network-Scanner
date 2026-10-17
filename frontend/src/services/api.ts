@@ -24,6 +24,7 @@ import type {
   IncidentDetectResult,
   IncidentEvidence,
   IncidentAuditTrail,
+  IncidentActivityPage,
   IncidentPage,
   IncidentRecalculateResult,
   IncidentRelationshipsPage,
@@ -37,6 +38,7 @@ import type {
   ReadinessStatus,
   ResponseCenterSummary,
   ResponseDetail,
+  ResponseAuditPage,
   ResponsePage,
   ResponsePolicy,
   ResponseProposal,
@@ -310,6 +312,35 @@ export const api = {
     request<IncidentTimeline>(`/api/v1/incidents/${encodeURIComponent(id)}/timeline`),
   getIncidentAudit: (id: string) =>
     request<IncidentAuditTrail>(`/api/v1/incidents/${encodeURIComponent(id)}/audit`),
+  /**
+   * Step 45: incident-scoped controlled-response activity. Read-only and
+   * bounded: filters are applied server-side and the response echoes the
+   * filters actually used. No global/cross-incident feed exists.
+   */
+  getIncidentActivity: (
+    id: string,
+    params?: {
+      event?: string;
+      actor?: string;
+      since?: string;
+      until?: string;
+      action_id?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ) => {
+    const query = new URLSearchParams();
+    if (params?.event) query.set("event", params.event);
+    if (params?.actor) query.set("actor", params.actor);
+    if (params?.since) query.set("since", params.since);
+    if (params?.until) query.set("until", params.until);
+    if (params?.action_id) query.set("action_id", params.action_id);
+    query.set("limit", String(params?.limit ?? 50));
+    query.set("offset", String(params?.offset ?? 0));
+    return request<IncidentActivityPage>(
+      `/api/v1/incidents/${encodeURIComponent(id)}/activity?${query.toString()}`,
+    );
+  },
   /** Step 29: stored deterministic relationships (bounded, read-only). */
   getIncidentRelationships: (
     id: string,
@@ -377,6 +408,19 @@ export const api = {
     return request<ResponsePage>(`/api/v1/responses?${query.toString()}`);
   },
   getResponse: (id: string) => request<ResponseDetail>(`/api/v1/responses/${encodeURIComponent(id)}`),
+  /**
+   * Step 42A: read-only audit history for one action (v2). This path is
+   * read-only on the server: it transitions nothing and writes no audit
+   * row. `detail` is returned only where the server recorded it.
+   */
+  getResponseAudit: (id: string, params?: { limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    query.set("limit", String(params?.limit ?? 50));
+    query.set("offset", String(params?.offset ?? 0));
+    return request<ResponseAuditPage>(
+      `/api/v2/responses/${encodeURIComponent(id)}/audit?${query.toString()}`,
+    );
+  },
   decideResponse: (
     id: string,
     decision: "approve" | "reject" | "cancel",

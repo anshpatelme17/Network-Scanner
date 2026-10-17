@@ -18,6 +18,7 @@ existing references — no new data, no fabrication.
 """
 
 import json
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy import desc, func, or_, select
@@ -33,7 +34,7 @@ from app.models.assets import Asset
 from app.models.correlations import Correlation, CorrelationEvidence
 from app.models.events import SecurityEvent
 from app.models.incidents import Incident, IncidentAudit, IncidentEvidence, IncidentRelationship
-from app.models.responses import ResponseAction
+from app.models.responses import ResponseAction, ResponseAudit
 from app.models.vulnerabilities import Vulnerability
 from app.schemas.incidents import (
     IncidentAuditResponse,
@@ -54,6 +55,7 @@ from app.schemas.incidents import (
 )
 from app.schemas.response_governance import ResponseRecommendationsResponse
 from app.schemas.responses import (
+    IncidentActivityPage,
     IncidentResponseProposalRequest,
     ResponseActionResponse,
     ResponsePage,
@@ -90,6 +92,51 @@ TIMELINE_KINDS = {
     "EVIDENCE_ATTACHED": "evidence",
     "UPDATED": "update",
 }
+
+# Step 44: stable tie-break rank for entries that share a timestamp, so the
+# rendered order is a deterministic total order. Distinct timestamps are
+# ordered solely by time and are unaffected by this map.
+TIMELINE_RANK = {
+    "observation": 0,
+    "event": 1,
+    "opened": 2,
+    "status": 3,
+    "evidence": 4,
+    "update": 5,
+    "audit": 6,
+    "response": 7,
+    "resolution": 8,
+}
+
+
+def _timeline_rank(kind: str) -> int:
+    return TIMELINE_RANK.get(kind, 6)
+
+
+def _may_read_responses(auth: AuthContext) -> bool:
+    """Whether response lifecycle entries may be shown to this caller.
+
+    Mirrors ``require_permission`` exactly: with enforcement inactive
+    (bootstrap mode) access passes through, preserving Steps 1-19.
+    """
+    return (not auth.enforcement) or "READ_RESPONSES" in auth.permissions
+
+
+def _response_timeline_label(event: str) -> str:
+    phrase = event[len("RESPONSE_") :] if event.startswith("RESPONSE_") else event
+    return f"Response {phrase.replace('_', ' ').capitalize()}"
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """Normalise an optional tz-aware instant to the naive-UTC column form.
+
+    Audit timestamps are stored naive-UTC; a caller-supplied filter that
+    carries an offset is converted first so the comparison never mixes
+    aware and naive datetimes.
+    """
+    if value.tzinfo is not None:
+        return value.astimezone(UTC).replace(tzinfo=None)
+    return value
 
 
 def _to_response(row: Incident) -> dict:
@@ -658,15 +705,26 @@ def get_timeline(
         return error_response(
             "INCIDENT_NOT_FOUND", f"No incident with id {incident_id}.", status.HTTP_404_NOT_FOUND
         )
-    entries: list[dict] = [
+    max_entries = get_settings().correlation_timeline_max_entries
+    # Step 44: entries are collected with a deterministic total-order key
+    # (undefined-time flag, timestamp, source rank, insertion sequence) so
+    # two entries sharing a timestamp never swap between reads. Entries with
+    # distinct timestamps keep the exact Step 29 order.
+    keyed: list[tuple[tuple, dict]] = []
+
+    def _add(entry: dict, rank: int) -> None:
+        at = entry["at"]
+        keyed.append(((at is None, at, rank, len(keyed)), entry))
+
+    _add(
         {
             "at": row.first_seen,
             "kind": "observation",
             "label": "First observed activity",
             "detail": f"Correlation window opened at {row.first_seen}.",
-        }
-    ]
-    max_entries = get_settings().correlation_timeline_max_entries
+        },
+        0,
+    )
     event_ids = incident_service.evidence_event_ids(db, row.correlation_id)
     if event_ids:
         stored_events = db.scalars(
@@ -675,7 +733,7 @@ def get_timeline(
             .order_by(SecurityEvent.event_time, SecurityEvent.id)
         ).all()
         for event in stored_events:
-            entries.append(
+            _add(
                 {
                     "at": event.event_time,
                     "kind": "event",
@@ -690,7 +748,8 @@ def get_timeline(
                     or event.hostname
                     or event.username,
                     "explanation": (event.description or "")[:500] or None,
-                }
+                },
+                1,
             )
     audits = db.scalars(
         select(IncidentAudit)
@@ -698,33 +757,81 @@ def get_timeline(
         .order_by(IncidentAudit.created_at, IncidentAudit.id)
     ).all()
     for audit in audits:
-        entries.append(
+        kind = TIMELINE_KINDS.get(audit.action, "audit")
+        _add(
             {
                 "at": audit.created_at,
-                "kind": TIMELINE_KINDS.get(audit.action, "audit"),
+                "kind": kind,
                 "label": audit.action.capitalize().replace("_", " "),
                 "detail": f"{audit.actor}: {audit.detail}" if audit.detail else audit.actor,
-            }
+            },
+            _timeline_rank(kind),
         )
+    # Step 44: controlled-response lifecycle rows become kind == "response"
+    # entries, shown only to callers who may read responses (matching
+    # require_permission). At most the most-recent ``max_entries`` rows are
+    # read, and a single batched lookup labels them, so the timeline stays
+    # bounded and free of N+1 queries. The per-action rationale is not
+    # duplicated here; it stays on the per-action audit endpoint.
+    if _may_read_responses(auth):
+        response_audits = db.scalars(
+            select(ResponseAudit)
+            .where(ResponseAudit.incident_id == row.id)
+            .order_by(desc(ResponseAudit.created_at), desc(ResponseAudit.id))
+            .limit(max_entries)
+        ).all()
+        action_ids = {item.action_id for item in response_audits}
+        action_types: dict[str, str] = {}
+        if action_ids:
+            action_types = {
+                row_action_id: row_action_type
+                for row_action_id, row_action_type in db.execute(
+                    select(ResponseAction.id, ResponseAction.action_type).where(
+                        ResponseAction.id.in_(action_ids)
+                    )
+                ).all()
+            }
+        for audit in reversed(response_audits):
+            transition = None
+            if audit.previous_status or audit.new_status:
+                transition = f"{audit.previous_status or '—'} -> {audit.new_status or '—'}"
+            _add(
+                {
+                    "at": audit.created_at,
+                    "kind": "response",
+                    "label": _response_timeline_label(audit.event),
+                    "detail": f"{audit.actor}: {transition}" if transition else audit.actor,
+                    "action_id": audit.action_id,
+                    "event": audit.event,
+                    "actor": audit.actor,
+                    "previous_status": audit.previous_status,
+                    "new_status": audit.new_status,
+                    "action_type": action_types.get(audit.action_id),
+                },
+                7,
+            )
     if row.last_seen != row.first_seen:
-        entries.append(
+        _add(
             {
                 "at": row.last_seen,
                 "kind": "observation",
                 "label": "Latest observed activity",
                 "detail": f"Correlation window extends to {row.last_seen}.",
-            }
+            },
+            0,
         )
     if row.resolved_at is not None:
-        entries.append(
+        _add(
             {
                 "at": row.resolved_at,
                 "kind": "resolution",
                 "label": "Resolved",
                 "detail": f"Incident entered {row.status} at {row.resolved_at}.",
-            }
+            },
+            8,
         )
-    entries.sort(key=lambda entry: (entry["at"] is None, entry["at"]))
+    keyed.sort(key=lambda pair: pair[0])
+    entries = [entry for _, entry in keyed]
     truncated = False
     if len(entries) > max_entries:
         truncated = True
@@ -738,6 +845,105 @@ def get_timeline(
         if tail is not None:
             entries.append(tail)
     return {"incident_id": row.id, "entries": entries, "truncated": truncated}
+
+
+@router.get(
+    "/{incident_id}/activity",
+    response_model=IncidentActivityPage,
+    summary="Incident response activity (Step 45)",
+)
+def get_activity(
+    incident_id: str,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("READ_INCIDENTS")),
+    _response_auth: AuthContext = Depends(require_permission("READ_RESPONSES")),
+    event: str | None = Query(default=None, description="Exact stored lifecycle event."),
+    actor: str | None = Query(default=None, max_length=128),
+    action_id: str | None = Query(default=None, max_length=64),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+):
+    """Incident-scoped, filtered, bounded accountability feed (Step 45).
+
+    Exposes the controlled-response lifecycle audit rows for one incident
+    to a caller who may read both incidents and responses. Filtering is
+    exact-match on stored values only — no free-text search, no join to
+    users or assets, and no identity enrichment. The endpoint is strictly
+    read-only: it transitions nothing and calls no expiry sweep.
+    """
+    row = _get_or_404(db, incident_id)
+    if row is None:
+        return error_response(
+            "INCIDENT_NOT_FOUND", f"No incident with id {incident_id}.", status.HTTP_404_NOT_FOUND
+        )
+    if event is not None and event not in response_service.RESPONSE_AUDIT_EVENTS:
+        return error_response(
+            "VALIDATION_ERROR",
+            f"Unknown activity event: {event}.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    conditions = [ResponseAudit.incident_id == row.id]
+    if event is not None:
+        conditions.append(ResponseAudit.event == event)
+    if actor is not None:
+        conditions.append(ResponseAudit.actor == actor)
+    if action_id is not None:
+        conditions.append(ResponseAudit.action_id == action_id)
+    if since is not None:
+        conditions.append(ResponseAudit.created_at >= _naive_utc(since))
+    if until is not None:
+        conditions.append(ResponseAudit.created_at <= _naive_utc(until))
+    total = db.scalar(select(func.count(ResponseAudit.id)).where(*conditions)) or 0
+    rows = db.scalars(
+        select(ResponseAudit)
+        .where(*conditions)
+        .order_by(ResponseAudit.created_at, ResponseAudit.id)
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    action_ids = {item.action_id for item in rows}
+    action_types: dict[str, str] = {}
+    if action_ids:
+        action_types = {
+            row_action_id: row_action_type
+            for row_action_id, row_action_type in db.execute(
+                select(ResponseAction.id, ResponseAction.action_type).where(
+                    ResponseAction.id.in_(action_ids)
+                )
+            ).all()
+        }
+    return {
+        "incident_id": row.id,
+        "incident_key": row.incident_key,
+        "items": [
+            {
+                "id": item.id,
+                "action_id": item.action_id,
+                "action_type": action_types.get(item.action_id),
+                "event": item.event,
+                "actor": item.actor,
+                "previous_status": item.previous_status,
+                "new_status": item.new_status,
+                "policy_version": item.policy_version,
+                "created_at": item.created_at,
+                "detail": item.detail,
+            }
+            for item in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + len(rows) < total,
+        "filters": {
+            "event": event,
+            "actor": actor,
+            "since": since,
+            "until": until,
+            "action_id": action_id,
+        },
+    }
 
 
 @router.post("/detect", response_model=IncidentDetectResponse, summary="Run incident detection")

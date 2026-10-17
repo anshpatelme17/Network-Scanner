@@ -191,6 +191,17 @@ class TimelineEntry(BaseModel):
     severity: str | None = None
     entity: str | None = None
     explanation: str | None = None
+    # Step 44 (additive): populated for kind == "response" entries only —
+    # the controlled-response lifecycle rows for this incident, projected
+    # onto the same chronological record. The optional per-action rationale
+    # is deliberately not duplicated here; it stays on the per-action audit
+    # endpoint where it belongs.
+    action_id: str | None = None
+    action_type: str | None = None
+    event: str | None = None
+    actor: str | None = None
+    previous_status: str | None = None
+    new_status: str | None = None
 
 
 class IncidentTimelineResponse(BaseModel):

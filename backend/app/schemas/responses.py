@@ -102,8 +102,84 @@ class AuditEntry(BaseModel):
     actor: str
     policy_version: str
     created_at: datetime
+    # Step 42A (additive): the optional operator rationale recorded on the
+    # audit row. NULL for every event except a rejection, and therefore
+    # absent for approval, cancellation and execute entries. Added
+    # without changing any existing field, so v1 responses keep the same
+    # shape and simply gain one nullable key.
+    detail: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ResponseAuditPage(BaseModel):
+    """One action's audit history, bounded and read-only (Step 42A).
+
+    ``entries`` is the requested window; ``total`` counts every audit row
+    for the action before pagination. ``truncated`` is true exactly when
+    more rows exist beyond ``offset + len(entries)``. No identity
+    enrichment and no ``request_id``: only the stored actor is exposed.
+    """
+
+    action_id: str
+    incident_id: str
+    entries: list[AuditEntry] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+    truncated: bool
+
+
+class ActivityItem(BaseModel):
+    """One response lifecycle row in an incident activity feed (Step 45).
+
+    Identity is the stored audit row. ``action_type`` is resolved from the
+    referenced action so the row is legible without a second request.
+    ``detail`` is the optional operator rationale and is non-null only for
+    a rejection — the same rule as the per-action audit endpoint.
+    """
+
+    id: str
+    action_id: str
+    action_type: str | None = None
+    event: str
+    actor: str
+    previous_status: str | None = None
+    new_status: str | None = None
+    policy_version: str
+    created_at: datetime
+    detail: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class ActivityFilters(BaseModel):
+    """The filters actually applied to an activity query (Step 45)."""
+
+    event: str | None = None
+    actor: str | None = None
+    since: datetime | None = None
+    until: datetime | None = None
+    action_id: str | None = None
+
+
+class IncidentActivityPage(BaseModel):
+    """One incident's controlled-response activity, bounded (Step 45).
+
+    ``items`` is the requested window in ``created_at``/``id`` order;
+    ``total`` counts every matching row before pagination. ``truncated``
+    is true exactly when more matching rows exist beyond ``offset +
+    len(items)``. ``filters`` echoes the applied filters.
+    """
+
+    incident_id: str
+    incident_key: str
+    items: list[ActivityItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+    truncated: bool
+    filters: ActivityFilters
 
 
 class ExecutionResult(BaseModel):

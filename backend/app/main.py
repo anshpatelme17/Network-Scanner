@@ -20,6 +20,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import __version__
 from app.api.v1.router import v1_router
+from app.api.v2.router import v2_router
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
@@ -111,6 +112,9 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(v1_router, prefix=settings.api_v1_prefix)
+    # Step 42A: the optional v2 surface. It carries only the read-only
+    # response audit history today; mounting it changes no v1 route.
+    app.include_router(v2_router, prefix=settings.api_v2_prefix)
     return app
 
 

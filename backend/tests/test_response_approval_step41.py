@@ -16,25 +16,41 @@ it, without weakening Steps 1-40:
   invalid-transition behaviour is unchanged;
 * the Step 41 migration adds the nullable column additively and
   preserves rows written before it.
+
+Two concurrency properties are covered, and they are deliberately kept
+apart. The **state-machine** guard is asserted on the SQLite fixture and
+passes everywhere. The **row-lock** guard is only exercised on a database
+that honours ``SELECT ... FOR UPDATE``: on SQLite it is measured and
+skipped, and on PostgreSQL — reached through
+``VERIFY_RUNTIME_DATABASE_URL`` in an isolated schema — it is executed for
+real, with the competing session observed waiting on the row lock.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import threading
+import time
+import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy import event as sa_event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session as SessionClass
+from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from alembic.config import Config
 from app.database import session as session_module
+from app.database.base import Base
+from app.models.correlations import Correlation
+from app.models.incidents import Incident
 from app.models.responses import ResponseAction, ResponseAudit
-from app.services import response_governance, response_service
+from app.services import incident_service, response_governance, response_service
 
 from .test_response_governance import OBSERVED_SOURCE_IP, _approve, _request, _seed
 
@@ -292,6 +308,154 @@ def _row_locking_available() -> bool:
     return "FOR UPDATE" in statement
 
 
+# ---------------------------------------------------------------------------
+# PostgreSQL-backed execution
+#
+# ``VERIFY_RUNTIME_DATABASE_URL`` follows the same convention as
+# ``test_audit_guard_sqlstate_fix.py``: an absent, unreachable or
+# driver-less server skips, never fails and never passes on the strength
+# of an absent database.
+# ---------------------------------------------------------------------------
+
+LIVE_DATABASE_URL = os.getenv("VERIFY_RUNTIME_DATABASE_URL")
+
+#: Every schema this module creates is named from this prefix, and is the
+#: only schema it will ever drop.
+ISOLATED_SCHEMA_PREFIX = "risk_race_test"
+
+
+def _sqlalchemy_url(url: str) -> str:
+    """``VERIFY_RUNTIME_DATABASE_URL`` as a URL SQLAlchemy can open.
+
+    The documented form is a plain ``postgresql://`` URL, which SQLAlchemy
+    resolves to the ``psycopg2`` driver. Only ``psycopg`` (v3) is a
+    dependency here, so the dialect is pinned explicitly rather than
+    requiring callers to know which driver is installed.
+    """
+    if "://" not in url or url.startswith("postgresql+"):
+        return url
+    return url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+
+@pytest.fixture(scope="module")
+def postgres_session():
+    """A session factory over a dedicated PostgreSQL schema.
+
+    The tables are created in a schema named by this fixture and dropped on
+    teardown, so nothing outside that name — no table, row or schema in
+    ``public`` or anywhere else — is written, altered or dropped. The
+    application's own engine is not touched.
+    """
+    if not LIVE_DATABASE_URL:
+        pytest.skip("VERIFY_RUNTIME_DATABASE_URL is not set; no server to test against")
+    try:
+        import psycopg
+    except ImportError:
+        pytest.skip("psycopg not installed")
+    try:
+        connection = psycopg.connect(LIVE_DATABASE_URL, autocommit=True)
+    except Exception as exc:  # noqa: BLE001 - a URL can be set with nothing listening
+        pytest.skip(f"PostgreSQL is not reachable: {str(exc).splitlines()[0][:100]}")
+    connection.close()
+
+    schema = f"{ISOLATED_SCHEMA_PREFIX}_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    engine = create_engine(
+        _sqlalchemy_url(LIVE_DATABASE_URL),
+        connect_args={"options": f"-c search_path={schema}"},
+    )
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        Base.metadata.create_all(engine)
+        yield sessionmaker(bind=engine, autoflush=False)
+    finally:
+        engine.dispose()
+        # A plain statement, not a SQLAlchemy construct: this is a raw
+        # DBAPI connection. Only the schema this fixture created is named.
+        with psycopg.connect(LIVE_DATABASE_URL, autocommit=True) as cleanup:
+            cleanup.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def _wait_for_blocked_lock(engine, timeout: float = 5.0) -> bool:
+    """Wait until a session is observably waiting on a transaction lock.
+
+    Polls ``pg_locks`` for an ungranted ``transactionid`` lock — the
+    observable state of a session blocked on ``SELECT ... FOR UPDATE`` —
+    rather than sleeping a fixed interval. Returning False means the lock
+    never engaged, which the caller reports as a failure.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with engine.connect() as connection:
+            blocked = connection.execute(
+                text("SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted")
+            ).scalar()
+        if int(blocked or 0) > 0:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
+def _seed_pending_action(factory) -> str:
+    """One PENDING_APPROVAL controlled action inside ``factory``'s schema."""
+    session = factory()
+    try:
+        suffix = uuid.uuid4().hex[:8]
+        moment = datetime.now(UTC).replace(tzinfo=None)
+        correlation = Correlation(
+            id=f"race-corr-{suffix}",
+            rule_id="multi-source-target",
+            rule_name="Same target, multiple sources",
+            title="Race fixture",
+            status="open",
+            severity="HIGH",
+            confidence=70,
+            explanation="seeded for the row-lock race",
+            window_start=moment,
+            window_end=moment,
+            event_count=2,
+        )
+        session.add(correlation)
+        session.flush()
+        incident = Incident(
+            id=f"race-inc-{suffix}",
+            incident_key=incident_service.incident_key_for(correlation.id),
+            title="Race fixture incident",
+            status="OPEN",
+            severity="HIGH",
+            confidence=70,
+            correlation_id=correlation.id,
+            first_seen=moment,
+            last_seen=moment,
+        )
+        session.add(incident)
+        session.flush()
+        action = ResponseAction(
+            id=f"race-act-{suffix}",
+            incident_id=incident.id,
+            action_type="BLOCK_INDICATOR",
+            target_type="IP",
+            target_reference="198.51.100.23",
+            reason="evidence-backed block",
+            requested_by="analyst-1",
+            status=response_service.STATUS_PENDING_APPROVAL,
+            dry_run=True,
+            policy_version="1.0.0",
+            provider="MOCK",
+            policy_decision="APPROVAL_REQUIRED",
+            approval_required=True,
+            rollback_supported=False,
+            target_evidence="[]",
+            expires_at=moment + timedelta(days=1),
+        )
+        session.add(action)
+        session.commit()
+        return action.id
+    finally:
+        session.close()
+
+
 def test_fixture_cannot_exercise_row_locking(client, clean_db):
     """The limitation is measured here, not assumed.
 
@@ -313,18 +477,27 @@ def _overlapping_decisions(
     first,
     second,
     action_id: str,
+    session_factory=None,
+    lock_probe=None,
 ) -> dict[str, str]:
     """Run two decisions that genuinely overlap, deterministically.
 
     The first decision is suspended after it has read the stored row —
     inside its audit write, so the transition is already decided — and is
-    released only once the second decision has run to completion and
-    committed. That is exactly the interleaving a row lock exists to
-    prevent, and it is forced with events rather than sleeps, so the result
-    never depends on scheduling.
+    released only once the competing decision has had the chance to act.
+    That is exactly the interleaving a row lock exists to prevent.
+
+    ``lock_probe`` turns the wait into an observable fact rather than a
+    duration: it must return True once the competing decision is blocked
+    on a transaction lock. Without it the competing decision simply runs
+    to completion, which on a database that ignores ``FOR UPDATE`` means
+    both are accepted — which is precisely the gap this documents.
 
     Returns ``{"first": "ok"|"refused", "second": ...}``.
     """
+    if session_factory is None:
+        session_factory = session_module.get_session_factory
+
     released = threading.Event()
     reached = threading.Event()
     taken = {"done": False}
@@ -335,45 +508,49 @@ def _overlapping_decisions(
         if not taken["done"] and not released.is_set():
             taken["done"] = True
             reached.set()
-            if not released.wait(timeout=5):
+            if not released.wait(timeout=10):
                 raise AssertionError("the competing decision never completed")
         original_audit(db, action, event, actor, previous_status, new_status, detail)
 
+    def _run(role: str, operation) -> None:
+        session = session_factory()
+        try:
+            operation(session, action_id)
+            results[role] = "ok"
+        except Exception:  # noqa: BLE001 - the loser must fail closed
+            results[role] = "refused"
+        finally:
+            session.rollback()
+            session.close()
+
     results: dict[str, str] = {}
-    # Module-level rebind, so the worker thread sees the wrapper too. It is
+    # Module-level rebind, so the worker threads see the wrapper too. It is
     # restored before returning, so no state survives this helper.
     response_governance._audit = _suspending_audit
     try:
+        first_thread = threading.Thread(target=_run, args=("first", first), name="first-decision")
+        first_thread.start()
+        assert reached.wait(timeout=10), "the first decision never reached its write"
 
-        def _run_first() -> None:
-            session = session_module.get_session_factory()()
-            try:
-                first(session, action_id)
-                results["first"] = "ok"
-            except Exception:  # noqa: BLE001 - the loser must fail closed
-                results["first"] = "refused"
-            finally:
-                session.rollback()
-                session.close()
+        # The competing decision starts while the first is still holding
+        # its row, so on a locking database it blocks here.
+        second_thread = threading.Thread(
+            target=_run, args=("second", second), name="second-decision"
+        )
+        second_thread.start()
+        if lock_probe is not None:
+            assert lock_probe(), "the competing decision never blocked on the row lock"
 
-        worker = threading.Thread(target=_run_first, name="first-decision")
-        worker.start()
-        assert reached.wait(timeout=5), "the first decision never reached its write"
-
-        second_session = session_module.get_session_factory()()
-        try:
-            second(second_session, action_id)
-            results["second"] = "ok"
-        except Exception:  # noqa: BLE001
-            results["second"] = "refused"
-        finally:
-            second_session.rollback()
-            second_session.close()
+        # Release the first decision: it commits, which is what lets the
+        # competing decision proceed.
         released.set()
 
-        worker.join(timeout=5)
-        assert not worker.is_alive(), "the first decision never completed"
+        first_thread.join(timeout=10)
+        second_thread.join(timeout=10)
+        assert not first_thread.is_alive(), "the first decision never completed"
+        assert not second_thread.is_alive(), "the competing decision never completed"
     finally:
+        released.set()
         response_governance._audit = original_audit
 
     return results
@@ -519,6 +696,96 @@ def test_overlapping_approval_and_rejection_are_serialized(client, clean_db):
     )
     if decided == "RESPONSE_REJECTED":
         assert decisions[0].detail == REASON
+
+
+def _assert_one_decision_only(factory, action_id, approval_actor, other_actor):
+    """Shared post-race verification for the PostgreSQL-backed races."""
+    session = factory()
+    try:
+        action = session.get(ResponseAction, action_id)
+        decisions = (
+            session.query(ResponseAudit)
+            .filter(
+                ResponseAudit.action_id == action_id,
+                ResponseAudit.event.in_(
+                    ("RESPONSE_APPROVED", "RESPONSE_REJECTED")
+                ),
+            )
+            .order_by(ResponseAudit.created_at, ResponseAudit.id)
+            .all()
+        )
+    finally:
+        session.close()
+
+    assert len(decisions) == 1, [row.event for row in decisions]
+    decided = decisions[0].event
+    if decided == "RESPONSE_APPROVED":
+        assert action.status == "APPROVED"
+        assert action.approved_by == approval_actor
+        assert action.approved_at is not None
+        assert decisions[0].actor == approval_actor
+    else:
+        assert action.status == "REJECTED"
+        assert action.approved_by is None
+        assert decisions[0].actor == other_actor
+        assert decisions[0].detail == REASON
+    return decided
+
+
+def test_postgres_overlapping_approvals_are_serialized_by_row_locking(postgres_session):
+    """The approval race, executed against real PostgreSQL.
+
+    Two sessions approve the same request with a genuine overlap: the first
+    holds its row lock while suspended inside its audit write, and the
+    second blocks on that lock until the first commits. ``_locked_action``
+    then re-reads the committed state and refuses, exactly one decision is
+    recorded, and the stored row names one approver.
+    """
+    engine = postgres_session.kw["bind"]
+
+    def _lock_probe() -> bool:
+        return _wait_for_blocked_lock(engine)
+
+    factory = postgres_session
+    action_id = _seed_pending_action(factory)
+
+    results = _overlapping_decisions(
+        lambda session, aid: response_governance.approve(session, aid, "operator-2"),
+        lambda session, aid: response_governance.approve(session, aid, "operator-3"),
+        action_id,
+        session_factory=factory,
+        lock_probe=_lock_probe,
+    )
+
+    # The row lock, not mere scheduling, is what separated them.
+    assert sorted(results.values()) == ["ok", "refused"], results
+    _assert_one_decision_only(
+        factory, action_id, approval_actor="operator-2", other_actor="operator-3"
+    )
+
+
+def test_postgres_overlapping_approval_and_rejection_are_serialized(postgres_session):
+    """Approval and rejection racing on real PostgreSQL: one outcome only."""
+    engine = postgres_session.kw["bind"]
+
+    def _lock_probe() -> bool:
+        return _wait_for_blocked_lock(engine)
+
+    factory = postgres_session
+    action_id = _seed_pending_action(factory)
+
+    results = _overlapping_decisions(
+        lambda session, aid: response_governance.approve(session, aid, "operator-2"),
+        lambda session, aid: response_governance.reject(session, aid, "operator-3", REASON),
+        action_id,
+        session_factory=factory,
+        lock_probe=_lock_probe,
+    )
+
+    assert sorted(results.values()) == ["ok", "refused"], results
+    _assert_one_decision_only(
+        factory, action_id, approval_actor="operator-2", other_actor="operator-3"
+    )
 
 
 # ---------------------------------------------------------------------------

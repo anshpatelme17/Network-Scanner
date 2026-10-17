@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CONTROLLED_ACTION_TYPES } from "../types";
-import { api, safeErrorText } from "../services/api";
+import { api, ApiError, safeErrorText } from "../services/api";
 import { useSession } from "../context/SessionContext";
 import type {
   AdapterPreview,
   DryRunResult,
   ProviderDryRun,
+  ResponseAuditPage,
   ResponseDetail,
   ResponsePolicy,
   ResponseProposal,
@@ -84,6 +85,10 @@ const CONTROLLED_NEXT_ACTIONS: Record<string, Array<"approve" | "reject" | "canc
 
 const CONTROLLED_ACTIONS: readonly string[] = CONTROLLED_ACTION_TYPES;
 
+// Step 42A: audit history page size and the states the section can be in.
+const AUDIT_PAGE_SIZE = 50;
+type AuditState = "loading" | "ready" | "denied" | "error";
+
 function isControlled(item: { action_type: string }): boolean {
   return CONTROLLED_ACTIONS.includes(item.action_type);
 }
@@ -115,6 +120,12 @@ export function Response() {
   const [decisionPending, setDecisionPending] = useState(false);
   const decisionPendingRef = useRef(false);
   const [rejectReason, setRejectReason] = useState("");
+  // Step 42A: audit history is loaded from the read-only v2 endpoint, not
+  // from the detail payload, so the workspace uses one bounded, paginated
+  // contract. It is display-only: no control here can mutate anything.
+  const [audit, setAudit] = useState<ResponseAuditPage | null>(null);
+  const [auditState, setAuditState] = useState<AuditState>("loading");
+  const [auditError, setAuditError] = useState<string | null>(null);
   // Step 31: advisory permission reflection. `can()` only decides whether
   // a governed control is *offered*; the server still authorizes it, and
   // an unknown identity is treated as not permitted.
@@ -136,6 +147,29 @@ export function Response() {
     }
   }, []);
 
+  // Step 42A: fetch one bounded page of an action's audit history. Only
+  // the server's stable error code decides the message shown; no server
+  // message or exception text is rendered verbatim.
+  const loadAudit = useCallback(async (id: string, offset: number) => {
+    setAuditState("loading");
+    setAuditError(null);
+    try {
+      const page = await api.getResponseAudit(id, { limit: AUDIT_PAGE_SIZE, offset });
+      // Normalise defensively so a malformed payload degrades to an honest
+      // empty list rather than crashing the detail view.
+      setAudit({ ...page, entries: Array.isArray(page.entries) ? page.entries : [] });
+      setAuditState("ready");
+    } catch (err) {
+      setAudit(null);
+      if (err instanceof ApiError && err.status === 403) {
+        setAuditState("denied");
+      } else {
+        setAuditError(safeErrorText(err, "Audit history could not be loaded."));
+        setAuditState("error");
+      }
+    }
+  }, []);
+
   useEffect(() => {
     void load("");
   }, [load]);
@@ -147,6 +181,8 @@ export function Response() {
     setPolicy(null);
     setProviderDryRun(null);
     setRollback(null);
+    setAudit(null);
+    void loadAudit(id, 0);
     try {
       setSelected(await api.getResponse(id));
     } catch {
@@ -180,6 +216,7 @@ export function Response() {
     try {
       setRollback(await api.rollbackResponse(id));
       setSelected(await api.getResponse(id));
+      void loadAudit(id, 0);
       await load(statusFilter);
     } catch {
       setRollback(null);
@@ -205,6 +242,7 @@ export function Response() {
       );
       setRejectReason("");
       setSelected(await api.getResponse(id));
+      void loadAudit(id, 0);
       await load(statusFilter);
     } catch (err) {
       // Only the server's stable machine code is inspected; no server
@@ -221,6 +259,7 @@ export function Response() {
     try {
       setDryRun(await api.dryRunResponse(id));
       setSelected(await api.getResponse(id));
+      void loadAudit(id, 0);
       await load(statusFilter);
     } catch {
       setNotice("Dry-run preview failed.");
@@ -232,6 +271,7 @@ export function Response() {
     try {
       await api.executeResponse(id);
       setSelected(await api.getResponse(id));
+      void loadAudit(id, 0);
       await load(statusFilter);
     } catch {
       setNotice("Execution was refused by policy.");
@@ -243,6 +283,7 @@ export function Response() {
     try {
       setAdapterPreview(await api.previewResponse(id));
       setSelected(await api.getResponse(id));
+      void loadAudit(id, 0);
     } catch {
       setAdapterPreview(null);
       setNotice("Adapter preview was refused by policy.");
@@ -710,22 +751,68 @@ export function Response() {
               </p>
             </div>
           )}
-          <h3>Audit history ({(selected.audit ?? []).length})</h3>
-          {(selected.audit ?? []).length === 0 ? (
-            <p className="muted">No audit entries.</p>
-          ) : (
-            <ul>
-              {(selected.audit ?? []).map((entry) => (
-                <li key={entry.id} style={{ marginBottom: 4 }}>
-                  <strong>{entry.event}</strong>{" "}
-                  <span className="muted">
-                    {entry.previous_status ?? "—"} → {entry.new_status ?? "—"} · {entry.actor} ·{" "}
-                    {formatDateTime(entry.created_at)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/*
+            Step 42A: read-only audit history for this action, loaded from
+            the v2 endpoint. It is display-only — there is deliberately no
+            approve, reject, cancel, execute, or delete control here, and
+            no request_id is shown. `detail` appears only where the server
+            recorded one (a rejection), never on an execute entry.
+          */}
+          <section aria-label="Audit history">
+            <h3>Audit history{audit ? ` (${audit.total})` : ""}</h3>
+            {auditState === "loading" && <p className="muted">Loading audit history…</p>}
+            {auditState === "denied" && (
+              <p className="muted">Your account is not permitted to view audit history.</p>
+            )}
+            {auditState === "error" && (
+              <p className="muted">{auditError ?? "Audit history could not be loaded."}</p>
+            )}
+            {auditState === "ready" && (audit?.entries.length ?? 0) === 0 && (
+              <p className="muted">No audit entries.</p>
+            )}
+            {auditState === "ready" && audit && audit.entries.length > 0 && (
+              <>
+                <ul aria-label="Audit entries">
+                  {audit.entries.map((entry) => (
+                    <li key={entry.id} style={{ marginBottom: 4 }}>
+                      <strong>{entry.event}</strong>{" "}
+                      <span className="muted">
+                        {entry.previous_status ?? "—"} → {entry.new_status ?? "—"} · {entry.actor} ·{" "}
+                        {formatDateTime(entry.created_at)}
+                      </span>
+                      {entry.detail && (
+                        <div className="muted" style={{ marginLeft: 16 }}>
+                          Reason: {entry.detail}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                {(audit.offset > 0 || audit.truncated) && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={audit.offset === 0}
+                      onClick={() =>
+                        void loadAudit(selected.id, Math.max(0, audit.offset - AUDIT_PAGE_SIZE))
+                      }
+                    >
+                      Previous
+                    </button>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      disabled={!audit.truncated}
+                      onClick={() => void loadAudit(selected.id, audit.offset + AUDIT_PAGE_SIZE)}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
           <p style={{ marginTop: 12 }}>
             <button className="button secondary" type="button" onClick={() => setSelected(null)}>
               Close proposal

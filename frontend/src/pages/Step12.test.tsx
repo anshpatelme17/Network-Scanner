@@ -54,6 +54,17 @@ const DRY_RUN = {
   policy_version: "1.0.0",
 };
 
+// Step 42A: the workspace now loads audit history from the read-only v2 feed.
+const AUDIT_PAGE = {
+  action_id: "resp-1",
+  incident_id: "inc-1",
+  entries: PROPOSAL_DETAIL.audit,
+  total: PROPOSAL_DETAIL.audit.length,
+  limit: 50,
+  offset: 0,
+  truncated: false,
+};
+
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(
     async (url: unknown, init?: RequestInit) => ({
@@ -96,6 +107,7 @@ describe("Response page (Step 12 dry-run foundation)", () => {
   it("opens detail with audit history and dry-run preview", async () => {
     mockFetch((url) => {
       if (url.includes("/dry-run")) return DRY_RUN;
+      if (url.includes("/api/v2/responses/resp-1/audit")) return AUDIT_PAGE;
       if (url.includes("/api/v1/responses/resp-1")) return PROPOSAL_DETAIL;
       return PROPOSAL_PAGE;
     });

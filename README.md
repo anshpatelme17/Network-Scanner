@@ -2435,5 +2435,102 @@ and, in `frontend/`:
 ```text
 npx vitest run src/pages/Step42_audit_history.test.tsx
 ```
+
+## 26. Audit integrity, response timeline and accountability (Phase 4, Steps 43-45)
+
+Steps 43-45 verify, harden and surface the controlled-response audit trail.
+None of them adds storage or a write path: every surface here reads rows the
+platform already wrote.
+
+### 26.1 Step 43 - audit integrity (verification, no behaviour change)
+
+Step 43 shipped no production change. It is a regression suite that pins the
+integrity properties the response audit already depends on: the event
+vocabulary is closed (`RESPONSE_AUDIT_EVENTS`), transitions record only
+vocabulary events with a consistent `previous_status -> new_status` chain,
+rejection reasons are trimmed and sanitized (a blank reason becomes absent,
+an overlong reason is a 422), a rationale is attached only to a rejection, a
+refused transition writes no row and leaks no traceback, `request_id` is
+never returned, an unsafe inbound `X-Request-ID` is replaced with a fresh
+opaque id, and audit reads are incident-scoped and repeatable.
+
+`backend/tests/test_audit_integrity_step43.py`:
+
+```text
+17 passed
+```
+
+### 26.2 Step 44 - response lifecycle in the incident timeline
+
+`GET /api/v1/incidents/{id}/timeline` now interleaves the action lifecycle
+with the existing observation and event entries. `TimelineEntry` gained
+optional `action_id`, `action_type`, `event`, `actor`, `previous_status` and
+`new_status`; response entries carry `kind: "response"`. They are appended
+only for callers who hold `READ_RESPONSES`, bounded to the most recent
+`max_entries`, with the `action_type` resolved in a single batched lookup so
+the timeline stays free of N+1 queries. Ordering is a deterministic total
+order, so repeated reads agree. The frontend renders these with an `info`
+badge, the action type and the action id as plain text - no new deep link and
+no new control.
+
+Focused tests:
+
+```text
+python -m pytest tests/test_incident_timeline_response_step44.py   # 12 passed
+npx vitest run src/pages/Step44_timeline_response.test.tsx         # 3 passed
+```
+
+### 26.3 Step 45 - incident accountability feed
+
+`GET /api/v1/incidents/{id}/activity` is the accountability view: the
+append-only controlled-response lifecycle rows for one incident, ordered by
+`created_at` then `id`. It requires both `READ_INCIDENTS` and
+`READ_RESPONSES`, returns 404 `INCIDENT_NOT_FOUND` for an unknown incident,
+and is strictly read-only - no state transition, no expiry sweep, no audit
+write.
+
+```json
+{
+  "incident_id": "...",
+  "incident_key": "...",
+  "items": [],
+  "total": 0,
+  "limit": 50,
+  "offset": 0,
+  "truncated": false,
+  "filters": { "event": null, "actor": null }
+}
+```
+
+Filters are exact matches applied server-side and echoed back in `filters`:
+`event` (validated against the closed vocabulary, otherwise 422), `actor`
+(<=128), `action_id` (<=64), and `since`/`until` (naive UTC). `limit`
+defaults to 50 and is capped at 200; `offset` defaults to 0; `truncated` is
+true exactly when `offset + len(items) < total`. Each item exposes only the
+stored fields - `id`, `action_id`, `action_type`, `event`, `actor`,
+`previous_status`, `new_status`, `policy_version`, `created_at` and the
+optional rejection `detail` - never `request_id`.
+
+In the workspace the "Accountability activity" section shows the rows in a
+bounded table with the event, actor, action type/id and status transition,
+plus exact-match event/actor/time filters and Previous/Next paging. It adds
+no write control.
+
+Focused tests:
+
+```text
+python -m pytest tests/test_incident_activity_step45.py   # 18 passed
+npx vitest run src/pages/Step45_incident_activity.test.tsx # 6 passed
+```
+
+### 26.4 Step 46 - operational readiness
+
+Step 46 re-ran the whole surface and recorded the result rather than
+asserting it: backend `1082 passed, 14 skipped, 0 failed`; frontend
+`231 passed` with the one long-standing parallel-load flake
+(`Step33_workspace_foundation.test.tsx`) passing in isolation; `ruff check`
+clean apart from two pre-existing errors in `test_risk_consistency.py`; and a
+clean production build. No migration, no schema change and no write path was
+added by Steps 43-45.
 #   N e t w o r k - S c a n n e r  
  

@@ -440,6 +440,13 @@ export interface IncidentTimelineEntry {
   severity?: string;
   entity?: string | null;
   explanation?: string | null;
+  /** Step 44: present on kind == "response" entries (controlled-response lifecycle). */
+  action_id?: string;
+  action_type?: string | null;
+  event?: string;
+  actor?: string;
+  previous_status?: string | null;
+  new_status?: string | null;
 }
 
 export interface IncidentTimeline {
@@ -502,6 +509,40 @@ export interface IncidentAuditTrail {
   entries: IncidentAuditEntry[];
 }
 
+/** Step 45: one controlled-response lifecycle row in the incident activity feed. */
+export interface IncidentActivityItem {
+  id: string;
+  action_id: string;
+  action_type?: string | null;
+  event: string;
+  actor: string;
+  previous_status?: string | null;
+  new_status?: string | null;
+  policy_version: string;
+  created_at: string;
+  detail?: string | null;
+}
+
+export interface IncidentActivityFilters {
+  event?: string | null;
+  actor?: string | null;
+  since?: string | null;
+  until?: string | null;
+  action_id?: string | null;
+}
+
+/** Step 45: incident-scoped, filtered, bounded accountability page. */
+export interface IncidentActivityPage {
+  incident_id: string;
+  incident_key: string;
+  items: IncidentActivityItem[];
+  total: number;
+  limit: number;
+  offset: number;
+  truncated: boolean;
+  filters: IncidentActivityFilters;
+}
+
 export interface IncidentDetectOutcome {
   correlation_id: string;
   incident_id: string | null;
@@ -533,6 +574,22 @@ export interface ResponseAuditEntry {
   actor: string;
   policy_version: string;
   created_at: string;
+  // Step 42A: the optional operator rationale recorded on the audit row.
+  // Present only on a rejection; null for every other lifecycle event, so
+  // an execute entry never displays a reason.
+  detail: string | null;
+}
+
+// Step 42A: one action's bounded, read-only audit history (v2). No
+// request_id and no identity enrichment are exposed; only the stored actor.
+export interface ResponseAuditPage {
+  action_id: string;
+  incident_id: string;
+  entries: ResponseAuditEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+  truncated: boolean;
 }
 
 export interface ResponseProposal {

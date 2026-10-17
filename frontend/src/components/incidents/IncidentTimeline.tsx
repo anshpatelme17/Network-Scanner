@@ -18,6 +18,7 @@ export const TIMELINE_KINDS = [
   "evidence",
   "update",
   "audit",
+  "response",
   "resolution",
 ] as const;
 
@@ -40,6 +41,8 @@ function kindBadge(kind: string): string {
       return "warn";
     case "resolution":
       return "ok";
+    case "response":
+      return "info";
     default:
       return "neutral";
   }
@@ -111,6 +114,24 @@ export function IncidentTimeline({
             <a href={`/events?event=${encodeURIComponent(entry.event_id)}`}>
               <code>{entry.event_id}</code>
             </a>
+          </span>
+        )}
+        {/*
+          Step 44: response lifecycle entries carry the controlled action
+          that produced them. The action id is shown as plain code — no
+          deep link is invented — and the rationale is never rendered here;
+          it stays on the per-action audit history.
+        */}
+        {entry.kind === "response" && (
+          <span className="muted">
+            {" · "}
+            {entry.action_type ?? "response action"}
+            {entry.action_id ? (
+              <>
+                {" · action "}
+                <code>{entry.action_id}</code>
+              </>
+            ) : null}
           </span>
         )}
       </li>,

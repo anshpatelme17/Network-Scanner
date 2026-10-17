@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", description="API bind host")  # noqa: S104
     api_port: int = Field(default=8000, description="API bind port")
     api_v1_prefix: str = Field(default="/api/v1", description="Versioned API prefix")
+    # Step 42A: v2 hosts only endpoints that cannot be added to v1 without
+    # changing existing behaviour. v1 is unchanged and remains the default
+    # surface for every existing route.
+    api_v2_prefix: str = Field(default="/api/v2", description="Second versioned API prefix")
 
     database_url: str = Field(
         default="postgresql+psycopg://secuser:changeme_in_env@db:5432/security_platform",

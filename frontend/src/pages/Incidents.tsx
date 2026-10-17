@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { IncidentActivity as IncidentActivitySection } from "../components/incidents/IncidentActivity";
+import type { ActivityQuery } from "../components/incidents/IncidentActivity";
 import { IncidentTimeline as IncidentTimelineSection } from "../components/incidents/IncidentTimeline";
 import { ApiError, api, safeErrorText } from "../services/api";
 import type {
+  IncidentActivityPage,
   IncidentAuditTrail,
   IncidentDetail,
   IncidentEvidence,
@@ -148,6 +151,26 @@ function SectionNote({
   return null;
 }
 
+/**
+ * Step 45: normalise an activity page defensively. A missing or partial
+ * payload (for example an older server) degrades to an honest, empty page
+ * rather than throwing or inventing rows.
+ */
+function normalizeActivity(value: unknown): IncidentActivityPage | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<IncidentActivityPage>;
+  return {
+    incident_id: typeof raw.incident_id === "string" ? raw.incident_id : "",
+    incident_key: typeof raw.incident_key === "string" ? raw.incident_key : "",
+    items: Array.isArray(raw.items) ? raw.items : [],
+    total: typeof raw.total === "number" ? raw.total : 0,
+    limit: typeof raw.limit === "number" ? raw.limit : 50,
+    offset: typeof raw.offset === "number" ? raw.offset : 0,
+    truncated: Boolean(raw.truncated),
+    filters: raw.filters ?? {},
+  };
+}
+
 /** Incident management (Steps 11 + 17 + 29 ...): read + status only, organized as a SOC investigation workspace (Step 34). */
 export function Incidents() {
   const [items, setItems] = useState<IncidentSummary[]>([]);
@@ -161,6 +184,7 @@ export function Incidents() {
   const [analysisNotice, setAnalysisNotice] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<IncidentTimeline | null>(null);
   const [audit, setAudit] = useState<IncidentAuditTrail | null>(null);
+  const [activity, setActivity] = useState<IncidentActivityPage | null>(null);
   const [responses, setResponses] = useState<ResponseProposal[]>([]);
   const [recommendations, setRecommendations] = useState<ResponseRecommendation[]>([]);
   const [incidentRisk, setIncidentRisk] = useState<RiskAssessment | null>(null);
@@ -180,6 +204,7 @@ export function Incidents() {
   const [relationshipsState, setRelationshipsState] = useState<SectionState>("loading");
   const [timelineState, setTimelineState] = useState<SectionState>("loading");
   const [auditState, setAuditState] = useState<SectionState>("loading");
+  const [activityState, setActivityState] = useState<SectionState>("loading");
   const [responsesState, setResponsesState] = useState<SectionState>("loading");
   const [recommendationsState, setRecommendationsState] = useState<SectionState>("loading");
   const [riskState, setRiskState] = useState<SectionState>("loading");
@@ -207,6 +232,23 @@ export function Incidents() {
   useEffect(() => {
     void load("", "", "");
   }, [load]);
+
+  /**
+   * Step 45: load (or re-query) the incident accountability feed. The
+   * filters and pagination are applied by the server; this only forwards
+   * the requested window and records the resulting state.
+   */
+  const loadActivity = useCallback(async (id: string, query: ActivityQuery = {}) => {
+    setActivityState("loading");
+    try {
+      const page = await api.getIncidentActivity(id, query);
+      setActivity(normalizeActivity(page));
+      setActivityState("ready");
+    } catch (err) {
+      setActivity(null);
+      setActivityState(isDenied(err) ? "denied" : "error");
+    }
+  }, []);
 
   const openDetail = async (id: string) => {
     try {
@@ -249,6 +291,8 @@ export function Incidents() {
       setAuditState,
       setAudit,
     );
+    // Step 45: the accountability feed loads independently of the rest.
+    void loadActivity(id);
     void runSection(
       () => api.getIncidentResponses(id),
       (value) =>
@@ -470,6 +514,7 @@ export function Incidents() {
     setAnalysisNotice(null);
     setTimeline(null);
     setAudit(null);
+    setActivity(null);
     setResponses([]);
     setRecommendations([]);
     setIncidentRisk(null);
@@ -477,6 +522,7 @@ export function Incidents() {
     setRelationshipsState("loading");
     setTimelineState("loading");
     setAuditState("loading");
+    setActivityState("loading");
     setResponsesState("loading");
     setRecommendationsState("loading");
     setRiskState("loading");
@@ -958,6 +1004,19 @@ export function Incidents() {
           {auditState === "ready" && (audit?.entries.length ?? 0) === 0 && (
             <p className="muted">No audit entries are stored yet.</p>
           )}
+
+          {/* G2. Accountability activity (Step 45) — the append-only
+              controlled-response trail for this incident, server-filtered. */}
+          <IncidentActivitySection
+            activity={activity}
+            state={activityState}
+            onQuery={(query) => {
+              if (selected) void loadActivity(selected.id, query);
+            }}
+            onReload={() => {
+              if (selected) void loadActivity(selected.id);
+            }}
+          />
 
           {/* H. What can happen next? */}
           <h4>What can happen next?</h4>
