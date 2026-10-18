@@ -166,6 +166,12 @@ class IncidentEvidenceResponse(BaseModel):
     correlation: EvidenceCorrelation | None = None
     events: list[EvidenceEvent] = Field(default_factory=list)
     vulnerabilities: list[EvidenceVulnerability] = Field(default_factory=list)
+    # Step 65 (additive): the vulnerability sub-list is bounded
+    # independently of events by ``correlation_evidence_max``. Counts
+    # report the true totals; the complete link set is enumerable through
+    # the paged observations endpoint.
+    vulnerability_count: int = 0
+    vulnerabilities_truncated: bool = False
     # Step 29 (additive): bounded overview of the same references —
     # never a payload copy and never new data.
     evidence_count: int = 0
@@ -244,6 +250,14 @@ class IncidentObservationsResponse(BaseModel):
     event_count: int
     vulnerability_count: int
     correlation_count: int
+    # Step 65 (additive): the complete evidence-link set is paged in stable
+    # ``(evidence_kind, evidence_id)`` order. ``total`` is the full count so
+    # a caller can page every link; ``truncated`` matches the Step 64
+    # convention (``offset + len(observations) < total``).
+    total: int = 0
+    limit: int | None = None
+    offset: int | None = None
+    truncated: bool = False
     observations: list[IncidentObservation] = Field(default_factory=list)
 
 

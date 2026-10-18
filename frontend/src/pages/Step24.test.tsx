@@ -76,6 +76,27 @@ const EVIDENCE = {
     },
   ],
 };
+const SECOND_VULN = {
+  id: "vuln-2",
+  title: "Second bounded finding",
+  severity: "LOW",
+  status: "OPEN",
+  cve_id: "CVE-2026-0002",
+  reason: "Finding shares asset identifiers with the incident host.",
+};
+const EVIDENCE_TRUNCATED = {
+  ...EVIDENCE,
+  vulnerabilities: [EVIDENCE.vulnerabilities[0], SECOND_VULN],
+  vulnerability_count: 7,
+  vulnerabilities_truncated: true,
+};
+const EVIDENCE_EVENT_TRUNCATED = {
+  ...EVIDENCE,
+  evidence_count: 250,
+  truncated: true,
+  vulnerability_count: 1,
+  vulnerabilities_truncated: false,
+};
 const TIMELINE = {
   incident_id: "inc-1",
   entries: [
@@ -130,6 +151,27 @@ function route(url: string): unknown {
   return PAGE;
 }
 
+function routeWithEvidence(evidencePayload: unknown) {
+  return (url: string): unknown => {
+    if (url.endsWith("/evidence")) return evidencePayload;
+    return route(url);
+  };
+}
+
+async function openIncident(evidencePayload: unknown) {
+  mockFetch(routeWithEvidence(evidencePayload));
+  render(
+    <MemoryRouter>
+      <Incidents />
+    </MemoryRouter>,
+  );
+  await waitFor(() => expect(screen.getByText("Open")).toBeInTheDocument());
+  fireEvent.click(screen.getByText("Open"));
+  await waitFor(() =>
+    expect(screen.getByText(/Correlated observations:/)).toBeInTheDocument(),
+  );
+}
+
 describe("Incidents page (Step 24 correlation)", () => {
   beforeEach(() => vi.restoreAllMocks());
 
@@ -166,6 +208,44 @@ describe("Incidents page (Step 24 correlation)", () => {
     expect(screen.getByText("Timeline (3)")).toBeInTheDocument();
     expect(screen.getByText("Test finding on the same asset")).toBeInTheDocument();
     expect(screen.getByText(/references only, never/)).toBeInTheDocument();
+  });
+
+  it("reports the true vulnerability total when the bounded list is complete", async () => {
+    await openIncident({ ...EVIDENCE, vulnerability_count: 1, vulnerabilities_truncated: false });
+    expect(screen.getByText(/1 vulnerability finding\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText("Related vulnerability findings (1)")).toBeInTheDocument();
+    expect(screen.queryByText("incomplete")).toBeNull();
+    expect(screen.queryByText(/Showing .* of .* vulnerability findings/)).toBeNull();
+  });
+
+  it("marks a capped vulnerability list incomplete and shows total vs displayed", async () => {
+    await openIncident(EVIDENCE_TRUNCATED);
+    expect(
+      screen.getByText(/7 vulnerability finding\(s\) \(showing 2\)/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Related vulnerability findings (7 total, showing 2)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("incomplete")).toBeInTheDocument();
+    expect(screen.getByText(/Showing 2 of 7 vulnerability findings/)).toBeInTheDocument();
+    expect(screen.getByText("Second bounded finding")).toBeInTheDocument();
+  });
+
+  it("falls back to the list length when the total fields are absent", async () => {
+    await openIncident(EVIDENCE);
+    expect(screen.getByText(/1 vulnerability finding\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText("Related vulnerability findings (1)")).toBeInTheDocument();
+    expect(screen.queryByText("incomplete")).toBeNull();
+  });
+
+  it("does not treat event truncation as vulnerability truncation", async () => {
+    await openIncident(EVIDENCE_EVENT_TRUNCATED);
+    expect(
+      screen.getByText(/Evidence count 250 \(truncated at the configured bound\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Related vulnerability findings (1)")).toBeInTheDocument();
+    expect(screen.queryByText("incomplete")).toBeNull();
+    expect(screen.queryByText(/Showing .* of .* vulnerability findings/)).toBeNull();
   });
 
   it("uses neutral language and offers no response/remediation controls", async () => {

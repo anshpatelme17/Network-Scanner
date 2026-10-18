@@ -416,6 +416,9 @@ export interface IncidentEvidence {
   correlation: IncidentEvidenceCorrelation | null;
   events: IncidentEvidenceEvent[];
   vulnerabilities: IncidentEvidenceVulnerability[];
+  /** Step 65: true vulnerability total and whether the sub-list is capped. */
+  vulnerability_count?: number;
+  vulnerabilities_truncated?: boolean;
   /** Step 29 additive overview (optional so Step 11/17/24 payloads still render). */
   evidence_count?: number;
   truncated?: boolean;

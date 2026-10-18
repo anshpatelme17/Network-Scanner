@@ -528,9 +528,16 @@ export function Incidents() {
     setRiskState("loading");
   };
 
+  // Step 65: the API bounds the vulnerability sub-list independently of the
+  // event list, so the displayed array length is not the total. Prefer the
+  // backend total when present and keep the list length for older payloads.
+  const vulnerabilityShown = evidence?.vulnerabilities.length ?? 0;
+  const vulnerabilityTotal = evidence?.vulnerability_count ?? vulnerabilityShown;
+  const vulnerabilityTruncated = evidence?.vulnerabilities_truncated === true;
+
   const evidenceEmpty =
     selected?.evidence_event_ids.length === 0 &&
-    (evidence?.vulnerabilities.length ?? 0) === 0 &&
+    vulnerabilityTotal === 0 &&
     !evidence?.correlation &&
     (evidence?.correlation_rules?.length ?? 0) === 0 &&
     (evidence?.assets?.length ?? 0) === 0;
@@ -746,7 +753,8 @@ export function Incidents() {
             <>
               <p className="muted">
                 Correlated observations: {evidence.events.length} event(s) ·{" "}
-                {evidence.vulnerabilities.length} vulnerability finding(s) ·{" "}
+                {vulnerabilityTotal} vulnerability finding(s)
+                {vulnerabilityTruncated ? ` (showing ${vulnerabilityShown})` : ""} ·{" "}
                 {evidence.correlation ? "1 correlation" : "0 correlations"} — references only, never
                 payload copies.
               </p>
@@ -808,9 +816,20 @@ export function Incidents() {
               </ul>
             </>
           )}
-          {evidenceState === "ready" && (evidence?.vulnerabilities.length ?? 0) > 0 && (
+          {evidenceState === "ready" && vulnerabilityTotal > 0 && (
             <>
-              <h5>Related vulnerability findings ({evidence?.vulnerabilities.length ?? 0})</h5>
+              <h5>
+                Related vulnerability findings ({vulnerabilityTotal}
+                {vulnerabilityTruncated ? ` total, showing ${vulnerabilityShown}` : ""})
+              </h5>
+              {vulnerabilityTruncated && (
+                <p className="muted">
+                  <span className="badge neutral">incomplete</span> Showing {vulnerabilityShown}{" "}
+                  of {vulnerabilityTotal} vulnerability findings; the list is capped at the
+                  configured evidence bound. The complete link set can be paged through the
+                  observations endpoint.
+                </p>
+              )}
               <ul>
                 {(evidence?.vulnerabilities ?? []).map((finding) => (
                   <li key={finding.id} style={{ marginBottom: 4 }}>

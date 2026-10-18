@@ -391,11 +391,41 @@ def change_status_post(
     return change_status(payload, incident_id, db, auth)
 
 
-def _evidence_links(db: Session, incident_id: str) -> list[IncidentEvidence]:
+def _evidence_counts(db: Session, incident_id: str) -> dict[str, int]:
+    """Per-kind evidence-link totals without loading the link rows (Step 65)."""
+    rows = db.execute(
+        select(IncidentEvidence.evidence_kind, func.count(IncidentEvidence.id))
+        .where(IncidentEvidence.incident_id == incident_id)
+        .group_by(IncidentEvidence.evidence_kind)
+    ).all()
+    return {kind: int(count) for kind, count in rows}
+
+
+def _evidence_links_for_kind(
+    db: Session, incident_id: str, kind: str, limit: int
+) -> list[IncidentEvidence]:
+    """One bounded, deterministically ordered evidence-link slice (Step 65)."""
+    return db.scalars(
+        select(IncidentEvidence)
+        .where(
+            IncidentEvidence.incident_id == incident_id,
+            IncidentEvidence.evidence_kind == kind,
+        )
+        .order_by(IncidentEvidence.evidence_id)
+        .limit(limit)
+    ).all()
+
+
+def _evidence_links_page(
+    db: Session, incident_id: str, limit: int, offset: int
+) -> list[IncidentEvidence]:
+    """Stable page over every evidence link, ordered ``(kind, id)`` (Step 65)."""
     return db.scalars(
         select(IncidentEvidence)
         .where(IncidentEvidence.incident_id == incident_id)
         .order_by(IncidentEvidence.evidence_kind, IncidentEvidence.evidence_id)
+        .limit(limit)
+        .offset(offset)
     ).all()
 
 
@@ -414,29 +444,44 @@ def get_evidence(
     Step 29 (additive): the same references additionally get a bounded
     overview — counts, primary event, source distribution, distinct
     entity values, existing assets, observed span and contributing
-    rules. Lookups are batched (one ``IN`` per kind, never N+1) and the
-    event list is capped by ``correlation_evidence_max`` (``truncated``
-    reports it); everything derived is computed from the returned rows.
+    rules. Lookups are batched (one ``IN`` per kind, never N+1) and both
+    the event and vulnerability lists are capped independently by
+    ``correlation_evidence_max`` (``truncated`` / ``vulnerabilities_truncated``
+    report each); everything derived is computed from the returned rows.
+
+    Step 65: the true per-kind totals come from one grouped count, so a
+    capped view never misreports how much evidence exists. The complete
+    link set stays reachable through the paged observations endpoint.
     """
     row = _get_or_404(db, incident_id)
     if row is None:
         return error_response(
             "INCIDENT_NOT_FOUND", f"No incident with id {incident_id}.", status.HTTP_404_NOT_FOUND
         )
+    settings = get_settings()
+    counts = _evidence_counts(db, row.id)
     correlation = db.scalar(select(Correlation).where(Correlation.id == row.correlation_id))
-    role_by_event = {
-        link.event_id: link.role
-        for link in db.scalars(
-            select(CorrelationEvidence).where(
-                CorrelationEvidence.correlation_id == row.correlation_id
-            )
-        ).all()
-    }
-    links = _evidence_links(db, row.id)
-    event_links = [link for link in links if link.evidence_kind == incident_service.EVIDENCE_EVENT]
-    vuln_links = [
-        link for link in links if link.evidence_kind == incident_service.EVIDENCE_VULNERABILITY
-    ]
+    event_links = _evidence_links_for_kind(
+        db, row.id, incident_service.EVIDENCE_EVENT, settings.correlation_evidence_max
+    )
+    vuln_links = _evidence_links_for_kind(
+        db, row.id, incident_service.EVIDENCE_VULNERABILITY, settings.correlation_evidence_max
+    )
+
+    # Step 65: read roles only for the events that will be rendered, in one
+    # batched IN query. No displayed events means no role query at all.
+    role_by_event: dict[str, str] = {}
+    if event_links:
+        role_by_event = dict(
+            db.execute(
+                select(CorrelationEvidence.event_id, CorrelationEvidence.role).where(
+                    CorrelationEvidence.correlation_id == row.correlation_id,
+                    CorrelationEvidence.event_id.in_(
+                        [link.evidence_id for link in event_links]
+                    ),
+                )
+            ).all()
+        )
 
     event_rows: dict[str, SecurityEvent] = {}
     if event_links:
@@ -488,11 +533,12 @@ def get_evidence(
             }
         )
 
-    settings = get_settings()
-    evidence_count = len(events)
+    evidence_count = counts.get(incident_service.EVIDENCE_EVENT, 0)
     truncated = evidence_count > settings.correlation_evidence_max
     shown = events[: settings.correlation_evidence_max]
     shown_rows = [event_rows[item["id"]] for item in shown if item["id"] in event_rows]
+    vulnerability_count = counts.get(incident_service.EVIDENCE_VULNERABILITY, 0)
+    vulnerabilities_truncated = vulnerability_count > settings.correlation_evidence_max
 
     primary_event: dict | None = None
     if shown:
@@ -582,6 +628,8 @@ def get_evidence(
         ),
         "events": shown,
         "vulnerabilities": vulnerabilities,
+        "vulnerability_count": vulnerability_count,
+        "vulnerabilities_truncated": vulnerabilities_truncated,
         "evidence_count": evidence_count,
         "truncated": truncated,
         "primary_event": primary_event,
@@ -663,37 +711,52 @@ def get_observations(
     incident_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("READ_INCIDENTS")),
+    limit: int = Query(default=50, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ):
-    """Traceable observation links in Step 24 vocabulary (Step 24).
+    """Traceable observation links in Step 24 vocabulary (Step 24, paged Step 65).
 
     Reads the idempotent ``incident_evidence`` links (correlation /
     event / vulnerability references with reasons) without copying
     payloads, plus per-kind counts for the incident header.
+
+    Step 65: the complete link set is paged in stable
+    ``(evidence_kind, evidence_id)`` order. ``total`` is the full number of
+    links (all kinds), so a capped evidence overview can be completed by
+    walking pages; ``truncated`` is true exactly when
+    ``offset + len(observations) < total``.
+
+    The ordering makes pages stable for a static link set. Offset pagination
+    shares the Step 64 limitation: an insert or delete between requests can
+    shift the window, so a concurrent mutation may duplicate or omit a row
+    until the walk is repeated.
     """
     row = _get_or_404(db, incident_id)
     if row is None:
         return error_response(
             "INCIDENT_NOT_FOUND", f"No incident with id {incident_id}.", status.HTTP_404_NOT_FOUND
         )
-    links = _evidence_links(db, row.id)
-    counts = {"correlation": 0, "event": 0, "vulnerability": 0}
-    observations = []
-    for link in links:
-        if link.evidence_kind in counts:
-            counts[link.evidence_kind] += 1
-        observations.append(
-            {
-                "observation_type": link.evidence_kind,
-                "observation_id": link.evidence_id,
-                "reason": link.reason,
-                "created_at": link.created_at,
-            }
-        )
+    counts = _evidence_counts(db, row.id)
+    total = sum(counts.values())
+    links = _evidence_links_page(db, row.id, limit, offset)
+    observations = [
+        {
+            "observation_type": link.evidence_kind,
+            "observation_id": link.evidence_id,
+            "reason": link.reason,
+            "created_at": link.created_at,
+        }
+        for link in links
+    ]
     return {
         "incident_id": row.id,
-        "event_count": counts["event"],
-        "vulnerability_count": counts["vulnerability"],
-        "correlation_count": counts["correlation"],
+        "event_count": counts.get(incident_service.EVIDENCE_EVENT, 0),
+        "vulnerability_count": counts.get(incident_service.EVIDENCE_VULNERABILITY, 0),
+        "correlation_count": counts.get(incident_service.EVIDENCE_CORRELATION, 0),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "truncated": offset + len(links) < total,
         "observations": observations,
     }
 
