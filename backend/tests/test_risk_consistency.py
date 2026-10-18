@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
-
 from app.database import session as session_module
 from app.models.incidents import Incident
 from app.models.risk import RiskAssessment
@@ -48,8 +46,8 @@ def _make_correlation(db, *, correlation_id, severity="MEDIUM", confidence=70):
 
 
 def _attach_evidence(db, incident_id, count=2):
-    from app.models.incidents import IncidentEvidence
     from app.models.events import SecurityEvent
+    from app.models.incidents import IncidentEvidence
 
     moment = datetime(2026, 1, 5, 10, 5)
     for i in range(count):
