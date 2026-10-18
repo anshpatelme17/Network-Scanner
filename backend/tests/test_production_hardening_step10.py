@@ -15,7 +15,7 @@ import logging.config
 
 import pytest
 
-from app.core.config import ENV_PRODUCTION, Settings
+from app.core.config import ENV_PRODUCTION, ENV_STAGING, Settings
 
 SECRET = "s10-super-secret-value"
 
@@ -39,6 +39,20 @@ def _production(**overrides) -> Settings:
     return Settings(**base)
 
 
+def _staging(**overrides) -> Settings:
+    base = {
+        "environment": ENV_STAGING,
+        "secret_key": "k" * 48,
+        "database_url": "postgresql+psycopg://u:s10-real-db-password@db:5432/app",
+        "backend_cors_origins": ["https://staging.soc.example.com"],
+        "require_auth": True,
+        "connector_verify_tls": True,
+        "trusted_hosts": ["staging.soc.example.com"],
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
 def test_a_fully_hardened_production_config_starts():
     settings = _production()
     settings.validate_production()  # must not raise
@@ -49,6 +63,20 @@ def test_production_refuses_an_open_bootstrap():
     """REQUIRE_AUTH=false leaves unauthenticated first-admin creation open."""
     with pytest.raises(RuntimeError, match="REQUIRE_AUTH must be true in production"):
         _production(require_auth=False).validate_production()
+
+
+def test_staging_refuses_an_open_bootstrap():
+    """Staging is release-like and must not run the unauthenticated bootstrap."""
+    with pytest.raises(RuntimeError, match="REQUIRE_AUTH must be true in staging"):
+        _staging(require_auth=False).validate_production()
+
+
+def test_valid_staging_configuration_passes():
+    """A fully-configured staging deployment with REQUIRE_AUTH=true is accepted."""
+    settings = _staging()
+    settings.validate_production()  # must not raise
+    assert settings.environment == ENV_STAGING
+    assert not settings.is_production
 
 
 def test_production_refuses_disabled_connector_tls():
@@ -62,8 +90,8 @@ def test_production_refuses_empty_trusted_hosts():
 
 
 def test_new_rules_are_scoped_to_production_only():
-    """Development and staging must not start failing on these settings."""
-    for environment in ("development", "test", "staging"):
+    """Development and test must not start failing on these settings."""
+    for environment in ("development", "test"):
         settings = Settings(
             environment=environment,
             require_auth=False,
@@ -132,6 +160,56 @@ def test_production_rejects_an_unlisted_host_header(monkeypatch):
             assert client.get("/api/v1/health", headers={"Host": "soc.example"}).status_code == 200
             # A forged Host header is refused outright.
             assert client.get("/api/v1/health", headers={"Host": "evil.example"}).status_code == 400
+    finally:
+        get_settings.cache_clear()
+
+
+def test_staging_startup_fails_fast_without_require_auth(monkeypatch):
+    """Startup refuses an open bootstrap in staging, not just the unit method.
+
+    Mirrors ``test_production_rejects_an_unlisted_host_header``: configuration is
+    delivered through the environment and the LRU cache is cleared so the app
+    under construction reads it. ``create_app`` must raise before serving.
+    """
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    for name, value in (
+        ("ENVIRONMENT", "staging"),
+        ("SECRET_KEY", "k" * 48),
+        ("REQUIRE_AUTH", "false"),
+        ("BACKEND_CORS_ORIGINS", '["https://staging.soc.example"]'),
+        ("DATABASE_URL", "postgresql+psycopg://u:realpassword@db:5432/app"),
+        ("TRUSTED_HOSTS", '["staging.soc.example"]'),
+    ):
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="REQUIRE_AUTH must be true in staging"):
+            create_app()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_staging_startup_starts_when_require_auth_is_true(monkeypatch):
+    """A valid staging configuration still boots the application."""
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    for name, value in (
+        ("ENVIRONMENT", "staging"),
+        ("SECRET_KEY", "k" * 48),
+        ("REQUIRE_AUTH", "true"),
+        ("BACKEND_CORS_ORIGINS", '["https://staging.soc.example"]'),
+        ("DATABASE_URL", "postgresql+psycopg://u:realpassword@db:5432/app"),
+        ("TRUSTED_HOSTS", '["staging.soc.example"]'),
+    ):
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
+    try:
+        app = create_app()
+        assert app is not None
+        assert not get_settings().is_production
     finally:
         get_settings.cache_clear()
 

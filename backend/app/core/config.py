@@ -413,12 +413,21 @@ class Settings(BaseSettings):
         return self.environment == ENV_PRODUCTION
 
     def validate_production(self) -> None:
-        """Fail fast on unsafe production configuration (Step 31 hardened).
+        """Fail fast on unsafe production (or staging) configuration (Step 31).
 
         Every message names the *variable* to fix and never echoes the
         offending value, so a misconfiguration cannot leak a secret into
         a log aggregator, a crash report, or a terminal scrollback.
         """
+        # Staging is release-like but sits outside the full production guard
+        # block below (its secret/CORS/host expectations differ). It must not
+        # run the unauthenticated bootstrap either, so the same first-admin
+        # requirement is enforced here rather than skipped by the early return.
+        if self.environment == ENV_STAGING and not self.require_auth:
+            raise RuntimeError(
+                "REQUIRE_AUTH must be true in staging (it disables the unauthenticated "
+                "bootstrap that can create the first administrator)."
+            )
         if not self.is_production:
             return
         if self.debug:
