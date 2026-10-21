@@ -23,6 +23,7 @@ const SCAN_PROFILES: VulnScanProfile[] = [
   "BASIC",
   "STANDARD",
 ];
+const AUDIT_PAGE_SIZE = 50;
 
 function scannerBadge(scanner: string): string {
   return scanner === "nmap-vuln" ? "LIVE result" : "MOCK/TEST result";
@@ -60,6 +61,10 @@ export function Vulnerabilities() {
   const [scanJob, setScanJob] = useState<VulnScanJob | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [notice, setNotice] = useState<string | null>(null);
+  const [auditOffset, setAuditOffset] = useState(0);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const auditBusy = auditLoading || statusUpdating;
 
   const load = useCallback(async (severityValue: string, statusValue: string) => {
     setState("loading");
@@ -85,27 +90,86 @@ export function Vulnerabilities() {
     setNotice(null);
     setRisk(null);
     setLinks(null);
+    setAuditOffset(0);
+    setAuditLoading(true);
+    let detailLoaded = false;
     try {
-      const detail = await api.getVulnerability(id);
+      const detail = await api.getVulnerability(id, { limit: AUDIT_PAGE_SIZE, offset: 0 });
       setSelected(detail);
-      const [riskResult, linksResult] = await Promise.allSettled([
-        api.getVulnerabilityRisk(id),
-        api.getVulnerabilityLinks(id),
-      ]);
-      if (riskResult.status === "fulfilled") setRisk(riskResult.value);
-      if (linksResult.status === "fulfilled") setLinks(linksResult.value);
+      detailLoaded = true;
     } catch {
       setSelected(null);
+    } finally {
+      setAuditLoading(false);
     }
+    if (!detailLoaded) return;
+    const [riskResult, linksResult] = await Promise.allSettled([
+      api.getVulnerabilityRisk(id),
+      api.getVulnerabilityLinks(id),
+    ]);
+    if (riskResult.status === "fulfilled") setRisk(riskResult.value);
+    if (linksResult.status === "fulfilled") setLinks(linksResult.value);
   };
 
   const changeStatus = async (id: string, next: string) => {
+    if (auditBusy) return;
     setNotice(null);
+    const offset = selected?.audit_offset ?? auditOffset;
+    setStatusUpdating(true);
     try {
-      setSelected(await api.updateVulnerabilityStatus(id, next));
+      const updated = await api.updateVulnerabilityStatus(id, next);
+      setSelected((current) =>
+        current
+          ? {
+              ...current,
+              ...updated,
+              audit: current.audit,
+              audit_total: current.audit_total,
+              audit_limit: current.audit_limit,
+              audit_offset: current.audit_offset,
+              audit_truncated: current.audit_truncated,
+            }
+          : current,
+      );
       await load(severity, statusFilter);
+      setAuditLoading(true);
+      try {
+        const detail = await api.getVulnerability(id, {
+          limit: AUDIT_PAGE_SIZE,
+          offset,
+        });
+        setSelected(detail);
+        setAuditOffset(offset);
+      } catch {
+        setNotice("Status changed, but the audit history could not be refreshed.");
+      } finally {
+        setAuditLoading(false);
+      }
     } catch {
       setNotice("Status change was rejected by the server.");
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const changeAuditPage = async (offset: number) => {
+    if (!selected || auditBusy || offset < 0) return;
+    const currentOffset = selected.audit_offset ?? auditOffset;
+    if (offset === currentOffset) return;
+    if (typeof selected.audit_total === "number" && offset >= selected.audit_total) return;
+    setNotice(null);
+    setAuditLoading(true);
+    try {
+      const detail = await api.getVulnerability(selected.id, {
+        limit: AUDIT_PAGE_SIZE,
+        offset,
+      });
+      setSelected(detail);
+      setAuditOffset(offset);
+    } catch {
+      setNotice("Audit page could not be loaded; the current page is unchanged.");
+    } finally {
+      setAuditLoading(false);
     }
   };
 
@@ -127,6 +191,15 @@ export function Vulnerabilities() {
       setNotice("Assessment request was rejected by the server.");
     }
   };
+
+  const auditEntries = selected?.audit ?? [];
+  const auditTotal = typeof selected?.audit_total === "number" ? selected.audit_total : null;
+  const currentAuditOffset = selected?.audit_offset ?? auditOffset;
+  const auditPageSize = selected?.audit_limit ?? AUDIT_PAGE_SIZE;
+  const hasMoreAuditEntries =
+    auditTotal !== null && currentAuditOffset + auditEntries.length < auditTotal;
+  const canPageBack = auditTotal !== null && currentAuditOffset > 0 && !auditBusy;
+  const canPageForward = hasMoreAuditEntries && !auditBusy;
 
   return (
     <section aria-label="Vulnerability findings">
@@ -378,12 +451,26 @@ export function Vulnerabilities() {
               <p className="muted">{links.reasons.join(" · ")}</p>
             </>
           )}
-          <h3>Audit history ({(selected.audit ?? []).length})</h3>
-          {(selected.audit ?? []).length === 0 ? (
-            <p className="muted">No audit entries.</p>
+          <h3>
+            Audit history ({auditEntries.length}
+            {auditTotal !== null ? ` of ${auditTotal}` : ""})
+          </h3>
+          {auditTotal !== null && hasMoreAuditEntries && (
+            <p className="muted">
+              Showing {auditEntries.length} of {auditTotal} audit entries. More entries exist
+              beyond this page.
+            </p>
+          )}
+          {auditLoading && <p className="muted">Loading audit page…</p>}
+          {auditEntries.length === 0 ? (
+            <p className="muted">
+              {auditTotal === null || auditTotal === 0
+                ? "No audit entries."
+                : "No audit entries on this page."}
+            </p>
           ) : (
             <ul>
-              {(selected.audit ?? []).map((entry, index) => (
+              {auditEntries.map((entry, index) => (
                 <li key={`${entry.event}-${entry.created_at}-${index}`} style={{ marginBottom: 4 }}>
                   <strong>{entry.event}</strong>{" "}
                   <span className="muted">
@@ -394,6 +481,30 @@ export function Vulnerabilities() {
               ))}
             </ul>
           )}
+          {auditTotal !== null && (currentAuditOffset > 0 || hasMoreAuditEntries) && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                className="button secondary"
+                type="button"
+                aria-label="Previous audit page"
+                disabled={!canPageBack}
+                onClick={() =>
+                  void changeAuditPage(Math.max(0, currentAuditOffset - auditPageSize))
+                }
+              >
+                Previous
+              </button>
+              <button
+                className="button secondary"
+                type="button"
+                aria-label="Next audit page"
+                disabled={!canPageForward}
+                onClick={() => void changeAuditPage(currentAuditOffset + auditPageSize)}
+              >
+                Next
+              </button>
+            </div>
+          )}
           {(NEXT_STATUS[selected.status] ?? []).length > 0 && (
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
               {(NEXT_STATUS[selected.status] ?? []).map((next) => (
@@ -401,6 +512,7 @@ export function Vulnerabilities() {
                   key={next}
                   className="button secondary"
                   type="button"
+                  disabled={auditBusy}
                   onClick={() => void changeStatus(selected.id, next)}
                 >
                   Mark {next.charAt(0) + next.slice(1).toLowerCase().replace("_", " ")}

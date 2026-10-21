@@ -856,6 +856,10 @@ export interface VulnerabilityDetail extends VulnerabilitySummary {
   created_at: string;
   updated_at: string;
   audit: VulnerabilityAuditEntry[];
+  audit_total?: number;
+  audit_limit?: number | null;
+  audit_offset?: number | null;
+  audit_truncated?: boolean;
 }
 
 export type VulnScanProfile =

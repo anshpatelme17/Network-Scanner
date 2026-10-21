@@ -506,8 +506,15 @@ export const api = {
     query.set("offset", String(params?.offset ?? 0));
     return request<VulnerabilityPage>(`/api/v1/vulnerabilities?${query.toString()}`);
   },
-  getVulnerability: (id: string) =>
-    request<VulnerabilityDetail>(`/api/v1/vulnerabilities/${encodeURIComponent(id)}`),
+  getVulnerability: (id: string, params?: { limit?: number; offset?: number }) => {
+    const query = new URLSearchParams();
+    if (typeof params?.limit === "number") query.set("limit", String(params.limit));
+    if (typeof params?.offset === "number") query.set("offset", String(params.offset));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<VulnerabilityDetail>(
+      `/api/v1/vulnerabilities/${encodeURIComponent(id)}${suffix}`,
+    );
+  },
   getVulnerabilityRisk: (id: string) =>
     request<FindingRisk>(`/api/v1/vulnerabilities/${encodeURIComponent(id)}/risk`),
   getVulnerabilityLinks: (id: string) =>

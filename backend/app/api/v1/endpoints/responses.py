@@ -125,14 +125,29 @@ def _to_response(row: ResponseAction) -> dict:
     }
 
 
-def _audit_entries(db: Session, action_id: str) -> list[AuditEntry]:
-    # Chronological with an id tiebreak so rapid successive events order deterministically.
+def _audit_page(
+    db: Session, action_id: str, limit: int, offset: int
+) -> tuple[list[AuditEntry], int]:
+    """One bounded audit page plus the full count for its action.
+
+    Chronological with an id tiebreak so rapid successive events order
+    deterministically. The count and page use the same action predicate,
+    so callers can tell a complete short history from a capped page.
+    """
+    total = (
+        db.scalar(
+            select(func.count(ResponseAudit.id)).where(ResponseAudit.action_id == action_id)
+        )
+        or 0
+    )
     rows = db.scalars(
         select(ResponseAudit)
         .where(ResponseAudit.action_id == action_id)
         .order_by(ResponseAudit.created_at, ResponseAudit.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
-    return [AuditEntry.model_validate(row) for row in rows]
+    return [AuditEntry.model_validate(row) for row in rows], total
 
 
 def _get_or_404(db: Session, action_id: str):
@@ -395,7 +410,17 @@ def get_response(
     action_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("READ_RESPONSES")),
+    limit: int = Query(default=50, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ):
+    """Response detail with one bounded page of embedded audit history.
+
+    ``limit``/``offset`` apply only to ``audit``. The additive
+    ``audit_total``/``audit_limit``/``audit_offset``/``audit_truncated``
+    fields let a caller distinguish a complete short history from a
+    capped page; the entry shape and all other detail fields are
+    unchanged.
+    """
     row = _get_or_404(db, action_id)
     if row is None:
         return error_response(
@@ -406,7 +431,12 @@ def get_response(
     response_governance.expire_due(db, row.incident_id)
     db.refresh(row)
     detail = _to_response(row)
-    detail["audit"] = _audit_entries(db, row.id)
+    audit_entries, audit_total = _audit_page(db, row.id, limit, offset)
+    detail["audit"] = audit_entries
+    detail["audit_total"] = audit_total
+    detail["audit_limit"] = limit
+    detail["audit_offset"] = offset
+    detail["audit_truncated"] = offset + len(audit_entries) < audit_total
     stored = response_service.get_execution(db, row.id)
     detail["execution"] = ExecutionResult.model_validate(stored) if stored is not None else None
     rollback_row = db.scalar(select(ResponseRollback).where(ResponseRollback.action_id == row.id))

@@ -199,6 +199,13 @@ class ExecutionResult(BaseModel):
 
 class ResponseDetailResponse(ResponseActionResponse):
     audit: list[AuditEntry] = Field(default_factory=list)
+    # Additive audit-page metadata: ``audit`` is one bounded page, and
+    # ``audit_truncated`` is true exactly when more rows exist beyond
+    # ``audit_offset + len(audit)``.
+    audit_total: int = 0
+    audit_limit: int | None = None
+    audit_offset: int | None = None
+    audit_truncated: bool = False
     execution: ExecutionResult | None = Field(default=None)
     # Step 30: the recorded rollback attempt, or null when none was made.
     rollback: RollbackResponse | None = Field(default=None)

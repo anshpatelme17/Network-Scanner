@@ -10,13 +10,13 @@ read-only preview endpoint.
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy import desc, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.api.v1.auth_deps import require_permission
 from app.api.v1.limits import rate_limit
 from app.core.errors import error_response
 from app.database.session import get_db
-from app.models.scans import ScanAudit, ScanJob
+from app.models.scans import ScanJob
 from app.schemas.network import (
     NmapStatusResponse,
     ScanAuditEntry,
@@ -32,13 +32,9 @@ from app.services.target_validation import InvalidTargetError, TargetNotAuthoriz
 router = APIRouter(prefix="/network", tags=["network"])
 
 
-def _job_response(db: Session, job: ScanJob) -> dict:
+def _job_response(job: ScanJob) -> dict:
     body = ScanJobResponse.model_validate(job).model_dump()
-    audit = db.scalars(
-        select(ScanAudit)
-        .where(ScanAudit.scan_id == job.id)
-        .order_by(ScanAudit.created_at, ScanAudit.id)
-    ).all()
+    audit = sorted(job.audit, key=lambda entry: (entry.created_at, entry.id))
     body["audit"] = [ScanAuditEntry.model_validate(entry).model_dump() for entry in audit]
     return body
 
@@ -85,7 +81,7 @@ def create_scan(
         return error_response("TARGET_NOT_AUTHORIZED", str(exc), status.HTTP_403_FORBIDDEN)
     except nmap_runner.NmapUnavailableError as exc:
         return error_response("NMAP_UNAVAILABLE", str(exc), status.HTTP_503_SERVICE_UNAVAILABLE)
-    return _job_response(db, job)
+    return _job_response(job)
 
 
 @router.get("/scans", response_model=list[ScanJobResponse], summary="List recent scan jobs")
@@ -95,9 +91,12 @@ def list_scans(
     limit: int = Query(default=20, ge=1, le=100),
 ):
     jobs = db.scalars(
-        select(ScanJob).order_by(desc(ScanJob.created_at), ScanJob.id).limit(limit)
+        select(ScanJob)
+        .options(selectinload(ScanJob.audit))
+        .order_by(desc(ScanJob.created_at), ScanJob.id)
+        .limit(limit)
     ).all()
-    return [_job_response(db, job) for job in jobs]
+    return [_job_response(job) for job in jobs]
 
 
 @router.get("/scans/{scan_id}", response_model=ScanJobResponse, summary="Scan job status")
@@ -111,7 +110,7 @@ def get_scan(
         return error_response(
             "SCAN_NOT_FOUND", f"No scan job with id {scan_id}.", status.HTTP_404_NOT_FOUND
         )
-    return _job_response(db, job)
+    return _job_response(job)
 
 
 @router.post(
@@ -181,4 +180,4 @@ def cancel_scan(
         )
     except ScanStateError as exc:
         return error_response("SCAN_NOT_CANCELLABLE", str(exc), status.HTTP_409_CONFLICT)
-    return _job_response(db, job)
+    return _job_response(job)

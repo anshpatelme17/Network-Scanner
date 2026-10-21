@@ -86,11 +86,23 @@ def check_connector(
     source: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("MANAGE_EVENTS")),
+    _limit: None = Depends(rate_limit("connector_check", "rate_limit_connector_poll")),
 ):
+    if source not in connectors.SOURCES:
+        return _unknown_source(source)
+    lock = connector_polling.check_lock_for(source)
+    if not lock.acquire(blocking=False):
+        return error_response(
+            "CHECK_IN_PROGRESS",
+            f"{source}: a connectivity check is already in progress.",
+            status.HTTP_409_CONFLICT,
+        )
     try:
         return _to_status(connectors.check_connector(db, source, actor_for(auth, None)))
     except KeyError:
         return _unknown_source(source)
+    finally:
+        lock.release()
 
 
 @router.post(

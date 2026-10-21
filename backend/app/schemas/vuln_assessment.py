@@ -102,6 +102,10 @@ class VulnFindingAuditEntry(BaseModel):
 
 class VulnerabilityDetailResponse(VulnerabilityResponse):
     audit: list[VulnFindingAuditEntry] = Field(default_factory=list)
+    audit_total: int = 0
+    audit_limit: int | None = None
+    audit_offset: int | None = None
+    audit_truncated: bool = False
 
 
 class VulnerabilityPage(BaseModel):

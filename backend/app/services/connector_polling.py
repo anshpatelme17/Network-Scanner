@@ -101,6 +101,9 @@ class PollHealth:
 # Per-process polling state. No network I/O and no persistence here.
 _health: dict[str, PollHealth] = {}
 _locks: dict[str, threading.Lock] = {}
+_check_locks: dict[str, threading.Lock] = {
+    source: threading.Lock() for source in connectors.SOURCES
+}
 _registry_lock = threading.Lock()
 
 
@@ -121,6 +124,12 @@ def _lock_for(source: str) -> threading.Lock:
         return lock
 
 
+def check_lock_for(source: str) -> threading.Lock:
+    """Per-connector lock preventing overlapping manual connectivity checks."""
+    with _registry_lock:
+        return _check_locks[source]
+
+
 def health_for(source: str) -> PollHealth:
     """Health for one connector, without creating network activity."""
     with _registry_lock:
@@ -136,6 +145,8 @@ def reset() -> None:
     with _registry_lock:
         _health.clear()
         _locks.clear()
+        _check_locks.clear()
+        _check_locks.update({source: threading.Lock() for source in connectors.SOURCES})
 
 
 def _cooldown_seconds(category: str | None, retry_after: float | None) -> float:
@@ -335,6 +346,7 @@ __all__ = [
     "PollCooldown",
     "PollHealth",
     "PollInProgress",
+    "check_lock_for",
     "health_for",
     "is_due",
     "poll_connector",

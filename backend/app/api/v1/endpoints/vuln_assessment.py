@@ -221,6 +221,8 @@ def get_vulnerability(
     vulnerability_id: str,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("READ_VULNERABILITIES")),
+    limit: int = Query(default=MAX_LIMIT, ge=1, le=MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
 ):
     row = _finding_or_404(db, vulnerability_id)
     if row is None:
@@ -230,12 +232,23 @@ def get_vulnerability(
             status.HTTP_404_NOT_FOUND,
         )
     detail = _vuln_response(row)
+    audit_total = db.scalar(
+        select(func.count(VulnerabilityAudit.id)).where(
+            VulnerabilityAudit.vulnerability_id == row.id
+        )
+    ) or 0
     audit = db.scalars(
         select(VulnerabilityAudit)
         .where(VulnerabilityAudit.vulnerability_id == row.id)
         .order_by(VulnerabilityAudit.created_at, VulnerabilityAudit.id)
+        .limit(limit)
+        .offset(offset)
     ).all()
     detail["audit"] = [VulnFindingAuditEntry.model_validate(entry).model_dump() for entry in audit]
+    detail["audit_total"] = audit_total
+    detail["audit_limit"] = limit
+    detail["audit_offset"] = offset
+    detail["audit_truncated"] = offset + len(audit) < audit_total
     return detail
 
 
