@@ -1,4 +1,4 @@
-﻿"""Owner-confirmed local account recovery with strict target guards."""
+"""Owner-confirmed local account recovery with strict target guards."""
 
 
 from sqlalchemy import select

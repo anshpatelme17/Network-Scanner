@@ -1,1 +1,1 @@
-﻿"""Local operational scripts."""
+"""Local operational scripts."""

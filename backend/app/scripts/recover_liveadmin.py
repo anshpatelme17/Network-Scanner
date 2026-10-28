@@ -1,4 +1,4 @@
-﻿"""Interactive, owner-confirmed local recovery for liveadmin."""
+"""Interactive, owner-confirmed local recovery for liveadmin."""
 
 from getpass import getpass
 
