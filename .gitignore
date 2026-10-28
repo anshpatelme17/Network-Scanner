@@ -42,3 +42,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+/backups/
