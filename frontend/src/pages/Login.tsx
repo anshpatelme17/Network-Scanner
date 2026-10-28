@@ -63,9 +63,8 @@ export function Login() {
         <h3>Authentication</h3>
         <p className="muted">
           Sign in to act with your own identity. Permissions are enforced by
-          the backend — hiding buttons never grants access. With no users
-          configured yet, the API runs in bootstrap mode until the first
-          ADMIN is created.
+          the backend — hiding buttons never grants access. Your account is authenticated by the backend. Permissions are checked
+          server-side for protected actions.
         </p>
         {notice && <p className="muted">{notice}</p>}
       </div>
