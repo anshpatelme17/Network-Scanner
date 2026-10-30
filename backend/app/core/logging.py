@@ -64,12 +64,14 @@ def _install_redacting_record_factory() -> None:
     attached during startup would be discarded anyway.
 
     A record factory runs before any handler, logger filter or formatter, so
-    it is the only placement that cannot be bypassed by handler
-    reconfiguration. The previous factory is preserved and chained, and the
+    it protects the message from handler reconfiguration. Exception data is
+    attached later by ``Logger._log`` and is sanitized separately at
+    ``Logger.handle``. The previous factory is preserved and chained, and the
     installation is idempotent, so this composes with any other factory
     rather than replacing it.
     """
     global _PREVIOUS_RECORD_FACTORY
+    _install_exception_redaction()
     if getattr(logging.getLogRecordFactory(), "_securesecrets_redacting", False):
         return
     previous = logging.getLogRecordFactory()
@@ -89,6 +91,34 @@ def _install_redacting_record_factory() -> None:
     factory._securesecrets_redacting = True  # type: ignore[attr-defined]
     _PREVIOUS_RECORD_FACTORY = previous
     logging.setLogRecordFactory(factory)
+
+
+def _install_exception_redaction() -> None:
+    """Redact traceback data before a LogRecord reaches any handler."""
+    current = logging.Logger.handle
+    if getattr(current, "_securesecrets_exception_redacting", False):
+        return
+    previous = current
+
+    def handle(logger: logging.Logger, record: logging.LogRecord) -> None:
+        try:
+            if record.exc_info:
+                # Formatter.formatException includes nested and chained
+                # exceptions. Keep its useful stack/type/message diagnostics,
+                # but remove the original exception tuple so handlers cannot
+                # inspect unredacted exception objects.
+                formatted = logging.Formatter().formatException(record.exc_info)
+                record.exc_text = _redact(formatted)
+                record.exc_info = None
+            elif isinstance(record.exc_text, str):
+                record.exc_text = _redact(record.exc_text)
+        except Exception:  # noqa: BLE001 - logging must not break application errors
+            record.exc_info = None
+            record.exc_text = "Exception details withheld (traceback formatting failed)."
+        previous(logger, record)
+
+    handle._securesecrets_exception_redacting = True  # type: ignore[attr-defined]
+    logging.Logger.handle = handle
 
 
 def setup_logging(level: str = "INFO") -> None:
