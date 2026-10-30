@@ -38,12 +38,15 @@ misleading success.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from urllib.parse import quote, urlsplit, urlunsplit
 
 # The eight audit tables protected by the Step 12 migration.
 AUDIT_TABLES = (
@@ -371,7 +374,7 @@ def _report_probe(
             )
         return
     sqlstate = getattr(error, "sqlstate", None)
-    detail = f"{_first_line(str(error))} [sqlstate={sqlstate}]"
+    detail = f"database refused the statement [sqlstate={sqlstate}]"
     report.add(PASS if sqlstate == EXPECTED_SQLSTATE else FAIL, name, detail)
 
 
@@ -387,8 +390,8 @@ def check_audit_triggers(report: Report, database_url: str | None) -> bool:
 
     try:
         connection = psycopg.connect(database_url, autocommit=True)
-    except Exception as exc:  # noqa: BLE001 - report, never crash the verifier
-        report.add(SKIP, "PostgreSQL reachable", _first_line(str(exc)))
+    except Exception:  # noqa: BLE001 - connection errors may contain connection details
+        report.add(SKIP, "PostgreSQL reachable", "connection failed; details withheld")
         return False
     report.add(PASS, "PostgreSQL reachable", _server_version(connection))
 
@@ -451,6 +454,103 @@ def check_audit_triggers(report: Report, database_url: str | None) -> bool:
     return True
 
 
+def _compose_database_url(compose_file: str) -> str | None:
+    """Build a host-side PostgreSQL URL from Compose's resolved configuration.
+
+    Compose's ``DATABASE_URL`` uses the service DNS name ``db``, which is only
+    reachable from containers. Resolve the same settings Compose uses and use
+    its loopback-published port for this host process. Never emit config output:
+    it contains the database password.
+    """
+    try:
+        code, stdout, _stderr = _run_split(
+            ["docker", "compose", "-f", compose_file, "config", "--format", "json"]
+        )
+    except Exception:  # noqa: BLE001 - configuration is optional evidence
+        return None
+    if code != 0 or not isinstance(stdout, str):
+        return None
+    try:
+        config = json.loads(stdout)
+        if not isinstance(config, dict):
+            return None
+        services = config.get("services")
+        if not isinstance(services, dict):
+            return None
+        database = services.get("db")
+        if not isinstance(database, dict):
+            return None
+
+        environment = database.get("environment")
+        ports = database.get("ports")
+        if not isinstance(environment, dict) or not isinstance(ports, list):
+            return None
+        user = environment.get("POSTGRES_USER")
+        password = environment.get("POSTGRES_PASSWORD")
+        database_name = environment.get("POSTGRES_DB")
+        if not all(isinstance(value, str) for value in (user, password, database_name)):
+            return None
+        if not user or not database_name:
+            return None
+
+        candidates: list[tuple[str, int]] = []
+        for entry in ports:
+            if not isinstance(entry, dict):
+                return None
+            target = entry.get("target")
+            published = entry.get("published")
+            host_ip = entry.get("host_ip")
+            protocol = entry.get("protocol", "tcp")
+            if not isinstance(protocol, str):
+                return None
+            if isinstance(target, bool) or not str(target).isdecimal():
+                return None
+            if isinstance(published, bool) or not str(published).isdecimal():
+                return None
+            target_port = int(target)
+            published_port = int(published)
+            if not 1 <= target_port <= 65535 or not 1 <= published_port <= 65535:
+                return None
+            if host_ip is None or host_ip == "":
+                continue
+            if not isinstance(host_ip, str):
+                return None
+            try:
+                address = ipaddress.ip_address(host_ip)
+            except ValueError:
+                return None
+            if isinstance(address, ipaddress.IPv6Address) and address.scope_id is not None:
+                return None
+            if target_port == 5432 and protocol.lower() == "tcp" and address.is_loopback:
+                candidates.append((str(address), published_port))
+        if not candidates:
+            return None
+        host, port = candidates[0]
+        if ":" in host:
+            host = f"[{host}]"
+        return (
+            f"postgresql://{quote(user, safe='')}:{quote(password, safe='')}"
+            f"@{host}:{port}/{quote(database_name, safe='')}"
+        )
+    except (
+        json.JSONDecodeError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        UnicodeError,
+        RecursionError,
+    ):
+        return None
+
+
+def _psycopg_url(database_url: str) -> str:
+    """Accept SQLAlchemy's psycopg driver URL in the direct psycopg client."""
+    parsed = urlsplit(database_url)
+    if parsed.scheme == "postgresql+psycopg":
+        return urlunsplit(parsed._replace(scheme="postgresql"))
+    return database_url
+
+
 def _server_version(connection) -> str:
     # Only the cursor is scoped here. `with connection` would close the
     # connection on exit in psycopg 3, and the caller keeps using it.
@@ -498,7 +598,16 @@ def main(argv: list[str] | None = None) -> int:
 
     report = Report()
     docker_ok = check_containers(report, args.compose_file)
-    pg_ok = check_audit_triggers(report, args.database_url)
+    database_url = args.database_url or os.environ.get("DATABASE_URL")
+    if database_url:
+        database_url = _psycopg_url(database_url)
+    else:
+        database_url = _compose_database_url(args.compose_file)
+    try:
+        pg_ok = check_audit_triggers(report, database_url)
+    except Exception:  # noqa: BLE001 - database exceptions must not expose connection details
+        report.add(SKIP, "audit triggers verified", "verification failed; details withheld")
+        pg_ok = False
     if docker_ok:
         check_health(report, args.base_url)
     else:

@@ -14,6 +14,7 @@ tests cover both directions and neither is privileged:
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -131,6 +132,243 @@ def test_missing_database_url_is_skipped_not_assumed():
     assert verifier.check_audit_triggers(report, None) is False
     assert report.passed == 0
     assert any("no --database-url" in note for _, _, note in report.results)
+
+
+def _compose_config(*, host_ip="127.0.0.1", port="55432"):
+    return {
+        "services": {
+            "db": {
+                "environment": {
+                    "POSTGRES_DB": "audit-db",
+                    "POSTGRES_USER": "audit-user",
+                    "POSTGRES_PASSWORD": "",
+                },
+                "ports": [
+                    {"target": 5432, "published": port, "host_ip": host_ip}
+                ],
+            }
+        }
+    }
+
+
+def _mock_compose_config(monkeypatch, config):
+    monkeypatch.setattr(
+        verifier,
+        "_run_split",
+        lambda _cmd, timeout=60: (0, json.dumps(config), ""),
+    )
+
+
+def test_compose_database_url_encodes_reserved_characters(monkeypatch):
+    config = _compose_config()
+    env = config["services"]["db"]["environment"]
+    env.update(
+        POSTGRES_USER="u@:/?#%",
+        POSTGRES_PASSWORD="p@:/?#%",
+        POSTGRES_DB="d /?#%",
+    )
+    _mock_compose_config(monkeypatch, config)
+
+    url = verifier._compose_database_url("docker-compose.yml")
+    assert url == (
+        "postgresql://u%40%3A%2F%3F%23%25:p%40%3A%2F%3F%23%25"
+        "@127.0.0.1:55432/d%20%2F%3F%23%25"
+    )
+
+
+@pytest.mark.parametrize(
+    ("host_ip", "expected_host"),
+    [("127.0.0.1", "127.0.0.1"), ("::1", "[::1]")],
+)
+def test_compose_database_url_uses_the_matching_loopback_address(
+    monkeypatch, host_ip, expected_host
+):
+    _mock_compose_config(monkeypatch, _compose_config(host_ip=host_ip))
+    url = verifier._compose_database_url("docker-compose.yml")
+    assert url is not None
+    assert f"@{expected_host}:55432/" in url
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        [],
+        {"services": []},
+        {"services": {"db": []}},
+        {"services": {"db": {"environment": [], "ports": []}}},
+        {"services": {"db": {"environment": {}, "ports": []}}},
+        {
+            "services": {
+                "db": {
+                    "environment": {
+                        "POSTGRES_DB": None,
+                        "POSTGRES_USER": "user",
+                        "POSTGRES_PASSWORD": "",
+                    },
+                    "ports": [],
+                }
+            }
+        },
+        {**_compose_config(), "services": {"db": {**_compose_config()["services"]["db"], "ports": ["bad-entry"]}}},
+        {**_compose_config(), "services": {"db": {**_compose_config()["services"]["db"], "ports": [{"target": 5432, "published": "bad", "host_ip": "127.0.0.1"}]}}},
+    ],
+)
+def test_compose_database_url_skips_malformed_or_incomplete_config(monkeypatch, config):
+    _mock_compose_config(monkeypatch, config)
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+def test_compose_database_url_skips_malformed_json(monkeypatch):
+    monkeypatch.setattr(
+        verifier, "_run_split", lambda _cmd, timeout=60: (0, "{malformed json", "")
+    )
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+def test_compose_database_url_skips_null_config(monkeypatch):
+    monkeypatch.setattr(
+        verifier, "_run_split", lambda _cmd, timeout=60: (0, "null", "")
+    )
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+@pytest.mark.parametrize("field", ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"])
+def test_compose_database_url_skips_null_environment_values(monkeypatch, field):
+    config = _compose_config()
+    config["services"]["db"]["environment"][field] = None
+    _mock_compose_config(monkeypatch, config)
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+@pytest.mark.parametrize("field", ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"])
+def test_compose_database_url_skips_missing_database_settings(monkeypatch, field):
+    config = _compose_config()
+    del config["services"]["db"]["environment"][field]
+    _mock_compose_config(monkeypatch, config)
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+@pytest.mark.parametrize(
+    "port_entry",
+    [
+        "bad-entry",
+        {"published": 5432, "host_ip": "127.0.0.1"},
+        {"target": 5432, "host_ip": "127.0.0.1"},
+        {"target": 5432, "published": "0", "host_ip": "127.0.0.1"},
+        {"target": 5432, "published": "65536", "host_ip": "127.0.0.1"},
+        {"target": [], "published": 5432, "host_ip": "127.0.0.1"},
+        {"target": 5432, "published": 5432, "host_ip": []},
+    ],
+)
+def test_compose_database_url_skips_malformed_port_entries(monkeypatch, port_entry):
+    config = _compose_config()
+    config["services"]["db"]["ports"] = [port_entry]
+    _mock_compose_config(monkeypatch, config)
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+def test_compose_database_url_skips_non_loopback_or_missing_database_port(monkeypatch):
+    _mock_compose_config(monkeypatch, _compose_config(host_ip="0.0.0.0"))
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+def test_compose_database_url_skips_docker_command_failure(monkeypatch):
+    monkeypatch.setattr(
+        verifier,
+        "_run_split",
+        lambda _cmd, timeout=60: (1, "", "redacted command failure"),
+    )
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+def test_compose_database_url_skips_when_docker_command_raises(monkeypatch):
+    def failed_command(_cmd, timeout=60):
+        raise OSError("redacted command failure")
+
+    monkeypatch.setattr(verifier, "_run_split", failed_command)
+    assert verifier._compose_database_url("docker-compose.yml") is None
+
+
+@pytest.mark.parametrize(
+    ("argv", "environment_url", "expected"),
+    [
+        (["--database-url", "postgresql://cli.invalid/db"], "postgresql://env.invalid/db", "postgresql://cli.invalid/db"),
+        ([], "postgresql+psycopg://env.invalid/db", "postgresql://env.invalid/db"),
+        ([], None, "compose-url"),
+    ],
+)
+def test_main_selects_database_url_precedence(
+    monkeypatch, capsys, argv, environment_url, expected
+):
+    selected = []
+    monkeypatch.setattr(verifier, "check_containers", lambda *_args: False)
+    monkeypatch.setattr(verifier, "check_audit_triggers", lambda _report, url: selected.append(url) or False)
+    monkeypatch.setattr(verifier, "_compose_database_url", lambda _compose: "compose-url")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    if environment_url is not None:
+        monkeypatch.setenv("DATABASE_URL", environment_url)
+
+    assert verifier.main(argv) == 2
+    assert selected == [expected]
+    assert expected not in capsys.readouterr().out
+
+
+def test_connection_failure_is_skipped_without_exposing_details(monkeypatch, capsys):
+    import types
+
+    marker = "synthetic-connection-detail"
+
+    def fail_connect(*_args, **_kwargs):
+        raise RuntimeError(marker)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        types.SimpleNamespace(connect=fail_connect),
+    )
+    report = verifier.Report()
+    assert verifier.check_audit_triggers(report, "postgresql://host/db") is False
+    output = "\n".join(report.details) + capsys.readouterr().out
+    assert report.results == [(verifier.SKIP, "PostgreSQL reachable", "connection failed; details withheld")]
+    assert marker not in output
+
+
+def test_probe_error_details_are_not_written_to_the_report():
+    marker = "synthetic-database-error-detail"
+
+    class FakeDatabaseError(Exception):
+        sqlstate = verifier.EXPECTED_SQLSTATE
+
+    report = verifier.Report()
+    verifier._report_probe(
+        report, "auth_audits", "DELETE", (None, FakeDatabaseError(marker))
+    )
+    assert report.results[0][0] == verifier.PASS
+    assert marker not in " ".join(report.details)
+
+
+def test_main_withholds_unexpected_database_exception_details(monkeypatch, capsys):
+    marker = "synthetic-unexpected-database-detail"
+
+    def fail_verification(*_args):
+        raise RuntimeError(marker)
+
+    monkeypatch.setattr(verifier, "check_containers", lambda *_args: False)
+    monkeypatch.setattr(verifier, "_compose_database_url", lambda _compose: "postgresql://host/db")
+    monkeypatch.setattr(verifier, "check_audit_triggers", fail_verification)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert verifier.main([]) == 2
+    output = capsys.readouterr().out
+    assert "verification failed; details withheld" in output
+    assert marker not in output
+
+
+def test_sqlalchemy_psycopg_url_is_accepted_by_direct_client():
+    assert (
+        verifier._psycopg_url("postgresql+psycopg://localhost:5432/db")
+        == "postgresql://localhost:5432/db"
+    )
 
 
 # ---------------------------------------------------------------------------
