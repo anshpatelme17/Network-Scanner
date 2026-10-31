@@ -86,12 +86,12 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
 
-    # Step 31 transport hardening. Middleware is added outermost-first, so
-    # the request context runs before anything else can log or reject, and
-    # the body cap is applied before routing. These bound and label
-    # traffic only: they never authenticate or authorize.
-    app.add_middleware(SecurityHeadersMiddleware, settings=settings)
+    # Step 31 transport hardening. Starlette wraps middleware in reverse
+    # registration order: request context runs first, security headers wrap
+    # body-limit rejections, and the body cap runs before routing. These
+    # bound and label traffic only: they never authenticate or authorize.
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+    app.add_middleware(SecurityHeadersMiddleware, settings=settings)
     app.add_middleware(RequestContextMiddleware)
     if settings.trusted_hosts:
         # Optional (empty by default) so the development workflow and the
