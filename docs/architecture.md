@@ -1958,3 +1958,35 @@ fixed rank tiebreak on top of `at`). The rejection rationale is deliberately kep
 off the timeline and carried only by the per-action audit and the activity feed.
 Append-only enforcement is unchanged and remains the two layers from Steps 11
 (ORM guard) and 12 (PostgreSQL triggers plus a restricted role). See README 27.
+
+### 19. PostgreSQL least privilege (SEC-02)
+
+PostgreSQL runtime access is separated from object ownership and migrations.
+`sec_owner` is a NOLOGIN object-owner role; `sec_migrator` is a restricted login
+that can explicitly `SET ROLE sec_owner`; `sec_runtime` is the backend-only
+login with the table-level grants maintained in
+`backend/app/database/role_permissions.py`. The existing `secuser` remains the
+controlled bootstrap/recovery administrator during rollout and is never
+configured in the backend.
+
+The database owner and `public` schema owner are preserved. The migration owner
+receives schema CREATE without transferring schema ownership. Alembic requires
+`MIGRATION_DATABASE_URL_FILE`, switches to `sec_owner` before migration DDL, and
+does not fall back to the runtime setting. The backend reads only
+`DATABASE_URL_FILE`. Compose mounts the three protected secrets separately for
+PostgreSQL bootstrap, backend runtime, and the explicit one-off migration
+service. No DSN/password values belong in environment output or source files.
+
+Provisioning is handled by the reviewed, fail-closed
+`scripts/provision_postgres_least_privilege.sql`; it is not an application
+migration and is not run automatically. It validates the supplied 26-table and
+123-index inventory, keeps `pgdata`, leaves database/schema ownership intact,
+and transfers application-object ownership to `sec_owner`. Future table
+migrations must explicitly apply `runtime_grant_sql()` after creation. Default
+ACLs do not grant blanket runtime table or sequence access.
+
+Production rollout requires a verified backup and a staging copy in a separate
+Compose project/volume. Do not delete or recreate the existing data volume. Keep
+`secuser` available for controlled recovery until staging and rollout have
+succeeded; service rollback may temporarily restore the previous privileged
+runtime DSN and must be time-limited.

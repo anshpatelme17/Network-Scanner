@@ -1,4 +1,4 @@
-"""Alembic environment: runs migrations against DATABASE_URL.
+"""Alembic environment: runs with the dedicated migration identity.
 
 Step 1 ships with no domain migrations; this file wires the metadata so
 future ``alembic revision --autogenerate`` picks up new models.
@@ -10,7 +10,7 @@ import os
 import sys
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 
 from alembic import context
 
@@ -18,47 +18,31 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import app.models  # noqa: E402,F401
-from app.core.config import get_settings  # noqa: E402
 from app.database.base import Base  # noqa: E402
+from app.database.credentials import migration_database_url, set_migration_owner  # noqa: E402
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 
-def _database_url() -> str:
-    override = os.environ.get("DATABASE_URL")
-    if override:
-        return override
-    try:
-        return get_settings().database_url
-    except Exception:  # noqa: BLE001
-        return "postgresql+psycopg://secuser:changeme_in_env@db:5432/security_platform"
-
-
-config.set_main_option("sqlalchemy.url", _database_url())
-
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
+    # An offline script has no session to authenticate or inspect, so it
+    # cannot prove session_user/current_user before emitting migration DDL.
+    raise RuntimeError(
+        "SEC-02 requires online Alembic execution with verified migration roles."
     )
-    with context.begin_transaction():
-        context.run_migrations()
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(migration_database_url(), poolclass=pool.NullPool)
     with connectable.connect() as connection:
+        # This must precede context configuration and all migration DDL so
+        # every object is created as sec_owner, not sec_migrator.
+        set_migration_owner(connection)
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

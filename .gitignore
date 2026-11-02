@@ -3,6 +3,10 @@
 *.env
 !.env.example
 frontend/.env
+/secrets/
+/secrets/postgres_bootstrap_password
+/secrets/sec_runtime_database_url
+/secrets/sec_migration_database_url
 
 # Python
 __pycache__/

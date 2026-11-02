@@ -15,8 +15,10 @@ included in any error message — only the name of the offending variable.
 import json
 from functools import lru_cache
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.database.credentials import read_database_url_file
 
 # Step 31: closed vocabulary for ENVIRONMENT. An unrecognised value is a
 # configuration mistake, and silently coercing it to something else is how
@@ -65,10 +67,8 @@ class Settings(BaseSettings):
     # surface for every existing route.
     api_v2_prefix: str = Field(default="/api/v2", description="Second versioned API prefix")
 
-    database_url: str = Field(
-        default="postgresql+psycopg://secuser:changeme_in_env@db:5432/security_platform",
-        description="SQLAlchemy database URL",
-    )
+    database_url: str = Field(default="", repr=False, exclude=True)
+    database_url_file: str | None = Field(default=None, repr=False, exclude=True)
 
     log_level: str = Field(default="INFO", description="Logging level")
 
@@ -408,6 +408,19 @@ class Settings(BaseSettings):
             raise ValueError(f"log_level must be one of {sorted(allowed)}")
         return level
 
+    @model_validator(mode="after")
+    def load_database_url_secret(self) -> "Settings":
+        """Prefer a mounted runtime secret and reject ambiguous settings."""
+        if self.database_url_file:
+            if self.database_url:
+                raise ValueError(
+                    "Configure DATABASE_URL_FILE or DATABASE_URL, but not both."
+                )
+            self.database_url = read_database_url_file(
+                self.database_url_file, "DATABASE_URL_FILE"
+            )
+        return self
+
     @property
     def is_production(self) -> bool:
         return self.environment == ENV_PRODUCTION
@@ -493,5 +506,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    if not settings.database_url:
+        raise RuntimeError("DATABASE_URL_FILE or DATABASE_URL is required.")
     settings.validate_production()
     return settings

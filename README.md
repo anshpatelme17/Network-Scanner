@@ -1039,10 +1039,21 @@ uvicorn app.main:app --reload --port 8000
 
 ```powershell
 Copy-Item .env.example .env
-# set strong POSTGRES_PASSWORD + SECRET_KEY in .env, then:
+# Create the three protected secret files named by .env.example. They contain,
+# respectively, the PostgreSQL bootstrap password, the sec_runtime DSN, and the
+# sec_migrator DSN. Restrict their Windows ACLs; never commit them.
+# Build/start PostgreSQL without changing or removing the existing pgdata volume:
+docker compose up -d db
+# Back up the database and test provisioning on a separate staging copy first.
+# On the approved target, connect as secuser and run the reviewed provisioning
+# script. It aborts if the catalog differs from its verified preconditions.
+psql -X -v ON_ERROR_STOP=1 -d security_platform -f scripts/provision_postgres_least_privilege.sql
+# Set sec_runtime and sec_migrator passwords using an approved secret workflow,
+# then create/update their protected DSN files. Do not pass passwords as arguments.
+# Run migrations explicitly as sec_migrator; the migrator switches to sec_owner:
+docker compose --profile migration run --rm --no-deps migrator
+# Start the application only after staging verification succeeds:
 docker compose up --build -d
-# apply migrations inside the backend container (first domain migration):
-docker compose exec backend alembic upgrade head
 # Frontend: http://localhost:5173   Backend: http://localhost:8000/api/v1/health
 # Authorized lab scan (your own container loopback only):
 #   POST /api/v1/network/scans {"target":"127.0.0.1","scan_profile":"quick"}
@@ -1062,7 +1073,9 @@ traffic stays on the Compose network. Health endpoints:
 ## 8. Environment configuration
 
 See [`.env.example`](.env.example). Minimum keys: `APP_NAME`, `ENVIRONMENT`,
-`DEBUG`, `API_HOST`, `API_PORT`, `DATABASE_URL` (or `POSTGRES_*`),
+`DEBUG`, `API_HOST`, `API_PORT`, and protected database secret-file paths
+(`POSTGRES_BOOTSTRAP_PASSWORD_FILE`, `SEC_RUNTIME_DATABASE_URL_FILE`,
+`SEC_MIGRATION_DATABASE_URL_FILE`),
 `LOG_LEVEL`, `SECRET_KEY`, `BACKEND_CORS_ORIGINS` (backend default allow-list:
 `http://localhost:5173`, `http://localhost:3000`, `http://localhost`).
 Production refuses placeholder secrets / `DEBUG=true` at startup.
@@ -1182,7 +1195,11 @@ it is marked otherwise.
 | `ENV` / `ENVIRONMENT` | `development` | Closed vocabulary `development\|test\|staging\|production`; an unknown value is **rejected at parse time**, not coerced |
 | `DEBUG` | `false` | Must be `false` or startup fails |
 | `SECRET_KEY` | `CHANGE_ME_dev_only` | Placeholder **or** shorter than 32 characters fails startup; the message never echoes the value |
-| `DATABASE_URL` | dev DSN | A `changeme` password fails startup; the DSN is never echoed |
+| `DATABASE_URL_FILE` | mounted runtime secret path | Backend reads only the runtime DSN file; its content is excluded from settings representations |
+| `MIGRATION_DATABASE_URL_FILE` | mounted migration secret path | Alembic requires this file and never falls back to the runtime DSN |
+| `POSTGRES_BOOTSTRAP_PASSWORD_FILE` | protected host file path | Mounted only into PostgreSQL for initial database setup |
+| `SEC_RUNTIME_DATABASE_URL_FILE` | protected host file path | Mounted only into the backend service |
+| `SEC_MIGRATION_DATABASE_URL_FILE` | protected host file path | Mounted only into the one-off migration service |
 | `BACKEND_CORS_ORIGINS` | localhost dev origins | Must be non-empty and must not consist solely of the development origins; a wildcard is rejected in **every** environment |
 | `TRUSTED_HOSTS` | empty | Optional. When set, `TrustedHostMiddleware` validates the `Host` header. A wildcard is rejected |
 | `MAX_REQUEST_BYTES` | `1048576` | `0` is rejected in production (it would disable the body cap) |
@@ -2724,5 +2741,90 @@ documentation and change no production behaviour); Step 50 refined the incident
 accountability UI (§27.6 recorded it as deferred for lack of a Node runtime - that
 blocker was resolved and the refinement shipped); Step 51 documented operations
 (§27). This section is the snapshot a future release diff is measured against.
+
+## 29. PostgreSQL least privilege (SEC-02)
+
+SEC-02 separates database ownership, migration execution and application access.
+The existing `secuser` bootstrap administrator is retained for controlled
+recovery. `sec_owner` is a `NOLOGIN` owner role. `sec_migrator` is a dedicated
+login that must `SET ROLE sec_owner` before Alembic runs. `sec_runtime` is the
+backend-only login and receives the reviewed table grants from
+`backend/app/database/role_permissions.py`.
+
+The backend reads `DATABASE_URL_FILE`; Alembic accepts only
+`MIGRATION_DATABASE_URL_FILE`. Compose mounts the bootstrap password, runtime
+DSN and migration DSN as separate file-backed secrets. The migration service is
+explicitly invoked and has no runtime DSN secret. Secret-file contents must not
+be placed in `.env`, Compose environment values, logs or source control.
+
+### Verify Windows secret-file access
+
+Compose's file-backed secrets do not enforce restrictive Windows ACLs, and the
+application does not validate those ACLs. Before deployment, inspect metadata
+for each configured secret path without opening the files. Populate these path
+variables in the current PowerShell process from the approved deployment
+configuration; do not load or print the files' contents:
+
+```powershell
+$secretPaths = @(
+  $env:POSTGRES_BOOTSTRAP_PASSWORD_FILE,
+  $env:SEC_RUNTIME_DATABASE_URL_FILE,
+  $env:SEC_MIGRATION_DATABASE_URL_FILE
+)
+foreach ($secretPath in $secretPaths) {
+  if ([string]::IsNullOrWhiteSpace($secretPath) -or
+      -not (Test-Path -LiteralPath $secretPath -PathType Leaf)) {
+    throw 'A configured database secret file is missing.'
+  }
+  icacls.exe $secretPath
+}
+```
+
+Review the ACL output and ensure access is limited to the deployment identity
+that must mount each file and designated administrators. Remove inherited
+access for broad user groups through the organization's approved Windows ACL
+procedure. This check displays ACL metadata only; it does not prove or enforce
+the policy automatically.
+
+The role provisioning script is
+`scripts/provision_postgres_least_privilege.sql`. It is a one-shot, fail-closed
+script with catalog preconditions for the supplied 26-table/123-index
+inventory. It preserves database and `public` schema ownership and the existing
+`pgdata` volume. **Do not execute it against the production database until it
+has passed on an isolated staging copy.** It creates login roles without
+passwords; set their credentials separately through the approved secret
+workflow before starting services. PostgreSQL's bootstrap password file is read
+only when initializing an empty data directory; it does not change the existing
+`secuser` password in the preserved `pgdata` volume.
+
+### Backup, staging and rollback
+
+1. Confirm the existing `pgdata` volume name and take a verified database
+   backup using the approved PostgreSQL backup process. Store the backup and
+   its verification record outside the project tree with restricted access.
+2. Restore a copy into an isolated staging database/volume under a separate
+   Compose project name. Never remove, rename, reset or recreate the existing
+   `pgdata` volume to create the staging copy.
+3. Compare staging catalog output with the SQL script's preconditions. If any
+   role, owner, table, index, audit trigger, extension, function or ACL differs,
+   stop and review the script before proceeding.
+4. Provision roles and ownership on staging, set the login passwords through
+   the secure workflow, create the three secret files, run the migration
+   service, and verify both successful application operations and denied
+   administrative/audit operations as `sec_runtime`.
+5. After staging acceptance and a fresh verified backup, repeat the reviewed
+   steps on the existing database without changing the volume. Run migrations
+   with `docker compose --profile migration run --rm --no-deps migrator`, then
+   start the backend.
+6. Keep `secuser` elevated and unavailable to application containers until
+   rollout succeeds. For service rollback, restore the prior runtime connection
+   in the protected runtime secret file and restart only through the approved
+   deployment procedure. That temporarily restores the old privilege weakness;
+   time-limit and monitor it. Retain `pgdata` and the new roles during rollback.
+
+Each future migration that creates a table must call
+`runtime_grant_sql(table_name)` from `backend/app/database/role_permissions.py`
+after creating the table, and add a test for the intended rights. The
+provisioning script intentionally configures no blanket runtime default grants.
 #   N e t w o r k - S c a n n e r  
  

@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-security_platform}
       POSTGRES_USER: ${POSTGRES_USER:-secuser}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_bootstrap_password
     volumes:
       - pgdata:/var/lib/postgresql/data
     # Localhost-only binding: the database is reachable from backend/frontend
@@ -29,6 +29,8 @@ services:
     security_opt:
       - no-new-privileges:true
     shm_size: 128m
+    secrets:
+      - postgres_bootstrap_password
     stop_grace_period: 30s
     deploy:
       resources:
@@ -54,7 +56,7 @@ services:
       DEBUG: ${DEBUG:-false}
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-secuser}:${POSTGRES_PASSWORD:-changeme_in_env}@db:5432/${POSTGRES_DB:-security_platform}
+      DATABASE_URL_FILE: /run/secrets/sec_runtime_database_url
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SECRET_KEY: ${SECRET_KEY:-CHANGE_ME_dev_only}
       # Step 32: must be forwarded explicitly. The image contains no .env
@@ -135,6 +137,8 @@ services:
       # proxy or a TLS terminator should publish it deliberately instead.
       # Set API_BIND=0.0.0.0 (or a specific address) to expose it.
       - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    secrets:
+      - sec_runtime_database_url
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=4)"]
       interval: 30s
@@ -170,6 +174,20 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  migrator:
+    profiles: ["migration"]
+    build:
+      context: ./backend
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MIGRATION_DATABASE_URL_FILE: /run/secrets/sec_migration_database_url
+    secrets:
+      - sec_migration_database_url
+    command: ["alembic", "upgrade", "head"]
 
   frontend:
     build:
@@ -211,6 +229,14 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+secrets:
+  postgres_bootstrap_password:
+    file: ${POSTGRES_BOOTSTRAP_PASSWORD_FILE:?Set POSTGRES_BOOTSTRAP_PASSWORD_FILE to a protected file path}
+  sec_runtime_database_url:
+    file: ${SEC_RUNTIME_DATABASE_URL_FILE:?Set SEC_RUNTIME_DATABASE_URL_FILE to a protected file path}
+  sec_migration_database_url:
+    file: ${SEC_MIGRATION_DATABASE_URL_FILE:?Set SEC_MIGRATION_DATABASE_URL_FILE to a protected file path}
 
 volumes:
   pgdata:
