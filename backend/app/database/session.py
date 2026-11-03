@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.logging import get_logger
@@ -24,6 +25,103 @@ logger = get_logger(__name__)
 
 _engine = None
 _SessionLocal: sessionmaker | None = None
+
+
+class DatabaseConnectivityError(RuntimeError):
+    """A recognized database connection failure."""
+
+
+class RuntimeIdentityMismatch(RuntimeError):
+    """A connected database returned an identity other than the required one."""
+
+
+class RuntimeIdentityVerificationError(RuntimeError):
+    """The connected database identity could not be verified safely."""
+
+
+def is_connectivity_failure(
+    exc: Exception, *, connection_acquisition: bool
+) -> bool:
+    """Recognize only approved SQLAlchemy/DBAPI connectivity failures.
+
+    Non-DBAPI exceptions are rejected immediately. For DBAPI errors,
+    invalidated connections take precedence over SQLSTATE; otherwise only
+    SQLSTATE class 08 or acquisition-time OperationalError/InterfaceError
+    without a SQLSTATE are classified as connectivity failures.
+    """
+    if not isinstance(exc, DBAPIError):
+        return False
+
+    if exc.connection_invalidated:
+        return True
+
+    original = exc.orig
+    sqlstate = (
+        getattr(original, "sqlstate", None)
+        or getattr(original, "pgcode", None)
+    )
+    if sqlstate:
+        return str(sqlstate).startswith("08")
+
+    if connection_acquisition and isinstance(exc, (OperationalError, InterfaceError)):
+        return True
+
+    return False
+
+
+def verify_runtime_identity(engine) -> None:
+    """Require the backend connection to use the approved runtime identity.
+
+    SQLite remains available to tests and local development. This check is
+    called by the FastAPI lifespan, not by ``init_engine``.
+    """
+    if engine.dialect.name == "sqlite":
+        return
+
+    connection_acquisition = True
+    try:
+        with engine.connect() as connection:
+            connection_acquisition = False
+            row = connection.execute(
+                text("SELECT session_user, current_user, current_database()")
+            ).one()
+    except Exception as exc:  # noqa: BLE001 - redact driver/connection details
+        if is_connectivity_failure(
+            exc, connection_acquisition=connection_acquisition
+        ):
+            raise DatabaseConnectivityError(
+                "Database connection unavailable."
+            ) from None
+        raise RuntimeIdentityVerificationError(
+            "Runtime database identity could not be verified."
+        ) from None
+
+    try:
+        identity = tuple(row)
+    except Exception:  # noqa: BLE001 - unexpected result shape fails closed
+        raise RuntimeIdentityVerificationError(
+            "Runtime database identity could not be verified."
+        ) from None
+
+    if identity != ("sec_runtime", "sec_runtime", "security_platform"):
+        raise RuntimeIdentityMismatch(
+            "Runtime database identity does not match the required identity."
+        )
+
+
+def dispose_engine() -> None:
+    """Dispose and clear the global engine and session factory safely."""
+    global _engine, _SessionLocal
+
+    engine = _engine
+    _engine = None
+    _SessionLocal = None
+
+    if engine is not None:
+        try:
+            engine.dispose()
+        except Exception:  # noqa: BLE001 - do not expose driver details
+            logger.warning("Database engine disposal failed", exc_info=False)
 
 
 def _is_sqlite(database_url: str) -> bool:

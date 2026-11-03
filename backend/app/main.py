@@ -25,7 +25,15 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.ratelimit import FixedWindowRateLimiter
-from app.database.session import init_engine
+from app.database.session import (
+    DatabaseConnectivityError,
+    RuntimeIdentityMismatch,
+    RuntimeIdentityVerificationError,
+    dispose_engine,
+    init_engine,
+    is_connectivity_failure,
+    verify_runtime_identity,
+)
 from app.middleware import (
     BodySizeLimitMiddleware,
     RequestContextMiddleware,
@@ -45,11 +53,47 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
         settings.environment,
     )
     try:
-        init_engine(settings.database_url)
-        logger.info("Database engine initialized")
-    except Exception:  # noqa: BLE001
-        # Never crash liveness because the DB is down; readiness reports it.
-        logger.exception("Database engine initialization failed; readiness will be down")
+        engine = init_engine(settings.database_url)
+    except Exception as exc:  # noqa: BLE001 - classify without exposing details
+        if is_connectivity_failure(exc, connection_acquisition=False):
+            logger.warning(
+                "Database connection unavailable; readiness will be down"
+            )
+        else:
+            dispose_engine()
+            logger.error("Database engine initialization failed; startup aborted")
+            raise RuntimeError(
+                "Database engine initialization failed."
+            ) from None
+    else:
+        try:
+            verify_runtime_identity(engine)
+        except DatabaseConnectivityError:
+            logger.warning("Database connection unavailable; readiness will be down")
+        except RuntimeIdentityMismatch:
+            dispose_engine()
+            logger.error("Runtime database identity mismatch; startup aborted")
+            raise RuntimeError(
+                "Runtime database identity verification failed."
+            ) from None
+        except RuntimeIdentityVerificationError:
+            dispose_engine()
+            logger.error(
+                "Runtime database identity verification failed; startup aborted"
+            )
+            raise RuntimeError(
+                "Runtime database identity verification failed."
+            ) from None
+        except Exception:  # noqa: BLE001 - an unclassified check fails closed
+            dispose_engine()
+            logger.error(
+                "Runtime database identity verification failed; startup aborted"
+            )
+            raise RuntimeError(
+                "Runtime database identity verification failed."
+            ) from None
+        else:
+            logger.info("Database engine initialized")
     yield
     logger.info("Shutting down application")
 
